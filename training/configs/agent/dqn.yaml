@@ -1,0 +1,8 @@
+# DQN / DRQN-LSTM agent config
+hidden_dim: 256
+lr: 0.0001
+batch_size: 256
+gamma: 0.99
+# DRQN-LSTM specific
+lstm_hidden: 128
+lstm_window: 30

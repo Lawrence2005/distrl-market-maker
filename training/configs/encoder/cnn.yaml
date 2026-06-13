@@ -1,0 +1,6 @@
+type: cnn
+n_levels: 10          # LOB depth levels per side
+conv1_channels: 32
+conv2_channels: 16
+latent_dim: 32
+kernel_size: 3

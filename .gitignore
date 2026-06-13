@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Data (too large for git — use DVC or store separately)
+data/raw/
+data/lobster/
+*.csv
+*.parquet
+*.h5
+
+# Model weights (large — track with git-lfs or W&B artifacts)
+*.pt
+*.pth
+*.pkl
+checkpoints/
+
+# Experiment outputs (tracked via W&B, not git)
+experiments/results/runs/
+wandb/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+.env
+*.key

@@ -1,0 +1,4 @@
+type: autoencoder
+latent_dim: 16        # ablate: 8, 16, 32
+pretrained_weights: checkpoints/ae_encoder_16.pt
+freeze: true
