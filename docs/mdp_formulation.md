@@ -47,7 +47,7 @@ Single source of truth for all MDP design decisions. Update this document first 
 
 ### 2.3 Encoders
 
-All four encoders expose `encoder.encode(obs) -> torch.Tensor`. Any neural agent (DQN, PPO, QR-DQN, IQN) can use any encoder. SARSA (tile coding) is the only exception.
+All three snapshot encoders expose `encoder.encode(obs) -> torch.Tensor`. Any neural agent (DQN, PPO, QR-DQN, IQN) can use any encoder. LSTM is integrated inside the agent's network architecture (DRQN-style), giving the agent explicit temporal memory across timesteps within an episode. SARSA (tile coding) is the only exception.
 
 #### Encoder 1 — Handcrafted (baseline)
 - Identity transform on the feature vector above
@@ -68,24 +68,25 @@ Output: 8–32 dims (latent_dim ablated) | Frozen after pre-training
 ```
 Directly motivated by Gašperov survey (2021) which explicitly lists autoencoders as promising.
 
-#### Encoder 4 — LSTM
+#### Recurrent Variant — LSTM integrated inside agent architecture
 ```
-LSTM(hidden=128) over T=30 sequential LOB snapshots
-Output: 128-dim hidden state h_t
-Training: truncated BPTT; sequence replay buffer required
+Input:  sequence of T=30 LOB snapshots, shape (T, input_dim)
+LSTM(input_size=input_dim, hidden_size=128, num_layers=1, batch_first=True)
+Output: hidden state h_t, shape (128,) — feeds directly into Q-head or policy head
 ```
-h_t is a fixed-size vector any agent can consume. Sequence replay stores T-step sequences; hidden state recomputed during training to avoid stale-state bias. Primary citation: Sun et al. (2022).
+The LSTM hidden state (h_t, c_t) is carried forward across timesteps within an episode and reset to zero at episode start. This gives the agent explicit temporal memory. This variant requires a sequence replay buffer that stores T-step sequences of raw LOB observations rather than single transitions. The LSTM hidden state is recomputed from the raw sequence during each training update
+Primary citation: Sun et al. (2022).
 
 **Ablation matrix:**
 ```
-                   HC    CNN   AE    LSTM
-SARSA              ✓     ✗     ✗     ✗
-DQN                ✓     ✓     ✓     ✓
-PPO                ✓     ✓     ✓     ✓
-QR-DQN (CVaR_α)    ✓     ✓     ✓     ✓
-IQN (CVaR_α)       ✓     ✓     ✓     ✓
+                    HC    CNN    AE    Recurrent (LSTM)
+SARSA                ✓      ✗      ✗         ✗
+DQN / DRQN           ✓      ✓      ✓         ✓
+PPO / Recurrent PPO  ✓      ✓      ✓         ✓
+QR-DQN (CVaR_α)      ✓      ✓      ✓         ✓
+IQN (CVaR_α)         ✓      ✓      ✓         ✓
 ```
-**Total: 1 + (4×4) = 17 variants**
+**Total: 1 (SARSA) + 4 agents × 3 snapshot + 4 agents × 1 recurrent = 17 variants**
 
 ---
 

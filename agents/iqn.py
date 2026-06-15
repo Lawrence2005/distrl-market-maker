@@ -1,10 +1,7 @@
 """
 IQN — Implicit Quantile Network.
 
-Cosine embedding phi(tau) for implicit quantile function.
-CVaR policy: sample tau ~ U([0, alpha]) at inference.
-Richer risk-sensitive policies than QR-DQN.
-Expected advantage: better OOD generalization.
+Two variants: (1) snapshot IQN with HC/CNN/AE encoder; (2) recurrent IQN with LSTM integrated inside the architecture.
 
 Reference: Dabney, Ostrovski, Silver & Munos (2018).
 Week 5 deliverable.

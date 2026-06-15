@@ -14,7 +14,8 @@ encoder.encode(obs) -> torch.Tensor   # fixed-size vector
 | Handcrafted   | 11–13 dim vec | 11–13      | No        | None         | Standard      |
 | CNN           | LOB snapshot  | 16–32      | No        | End-to-end   | Standard      |
 | AE            | LOB snapshot  | 8–32       | No        | Unsupervised | Standard      |
-| LSTM          | T=30 sequence | 128 (h_t)  | Yes       | End-to-end   | Sequence      |
+
+* LSTM is integrated inside each recurrent agent variant. See agents/dqn.py (DRQN), agents/qrdqn.py (recurrent QR-DQN), agents/iqn.py (recurrent IQN).
 
 ## Ablation matrix
 

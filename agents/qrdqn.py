@@ -1,15 +1,9 @@
 """
 QR-DQN — Quantile Regression DQN.
 
-N=200 quantile heads, Huber quantile loss rho_tau,
-dueling network architecture (value + advantage streams),
-prioritized experience replay.
-
-CVaR policy: at inference, average lowest floor(alpha*N) quantile outputs.
-See agents/cvar_policy.py for wrapper.
+Two variants: (1) snapshot QR-DQN with HC/CNN/AE encoder; (2) recurrent QR-DQN with LSTM integrated inside the architecture. Recurrent + CVaR is the PRIMARY research agent.
 
 Reference: Dabney, Rowland, Bellemare & Munos (2018).
-PRIMARY research agent.
 Week 5 deliverable.
 """
 # TODO: implement

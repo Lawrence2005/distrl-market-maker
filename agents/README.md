@@ -7,10 +7,10 @@ research contribution.
 | Agent          | Library        | Risk-sensitive? | Encoders supported         |
 |----------------|----------------|-----------------|----------------------------|
 | sarsa.py       | Custom         | No              | Handcrafted (tile coding)  |
-| dqn.py         | SB3 + custom   | No              | HC / CNN / AE / LSTM       |
-| ppo.py         | SB3            | No              | HC / CNN / AE / LSTM       |
-| qrdqn.py       | Custom PyTorch | CVaR wrapper    | HC / CNN / AE / LSTM       |
-| iqn.py         | Custom PyTorch | CVaR wrapper    | HC / CNN / AE / LSTM       |
+| dqn.py         | SB3 + custom   | No              | HC / CNN / AE (snapshot) + -LSTM (recurrent) |
+| ppo.py         | SB3            | No              | HC / CNN / AE (snapshot) + -LSTM (recurrent) |
+| qrdqn.py       | Custom PyTorch | CVaR wrapper    | HC / CNN / AE (snapshot) + -LSTM (recurrent) |
+| iqn.py         | Custom PyTorch | CVaR wrapper    | HC / CNN / AE (snapshot) + -LSTM (recurrent) |
 | cvar_policy.py | —              | —               | CVaR wrapper for QR-DQN/IQN|
 
 All neural agents (DQN, PPO, QR-DQN, IQN) accept any of the four encoders

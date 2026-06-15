@@ -1,4 +1,0 @@
-type: lstm
-hidden_dim: 128
-window_size: 30
-n_levels: 10
