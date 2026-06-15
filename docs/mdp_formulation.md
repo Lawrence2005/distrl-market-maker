@@ -45,9 +45,9 @@ Single source of truth for all MDP design decisions. Update this document first 
 
 > K=3 levels per side is a reasonable default. **Note:** VPIN toxicity was removed — it does not appear in any of the 19 papers' reading notes.
 
-### 2.3 Encoders
+### 2.3 State Encoders and Recurrent Variants
 
-All three snapshot encoders expose `encoder.encode(obs) -> torch.Tensor`. Any neural agent (DQN, PPO, QR-DQN, IQN) can use any encoder. LSTM is integrated inside the agent's network architecture (DRQN-style), giving the agent explicit temporal memory across timesteps within an episode. SARSA (tile coding) is the only exception.
+Each neural agent (DQN, PPO, QR-DQN, IQN) is tested in two architectural modes: **snapshot mode**, where a single LOB observation is passed through an external encoder before reaching the agent's head, and **recurrent mode**, where an LSTM is integrated inside the agent's network architecture (DRQN-style), giving the agent explicit temporal memory across timesteps within an episode. SARSA (tile coding) is the only exception — incompatible with both neural encoders and recurrent integration.
 
 #### Encoder 1 — Handcrafted (baseline)
 - Identity transform on the feature vector above
@@ -74,8 +74,7 @@ Input:  sequence of T=30 LOB snapshots, shape (T, input_dim)
 LSTM(input_size=input_dim, hidden_size=128, num_layers=1, batch_first=True)
 Output: hidden state h_t, shape (128,) — feeds directly into Q-head or policy head
 ```
-The LSTM hidden state (h_t, c_t) is carried forward across timesteps within an episode and reset to zero at episode start. This gives the agent explicit temporal memory. This variant requires a sequence replay buffer that stores T-step sequences of raw LOB observations rather than single transitions. The LSTM hidden state is recomputed from the raw sequence during each training update
-Primary citation: Sun et al. (2022).
+The LSTM hidden state (h_t, c_t) is carried forward across timesteps within an episode and reset to zero at episode start. This gives the agent explicit temporal memory — it can detect Hawkes-process order flow clustering, price momentum, and regime shifts from the history of LOB observations. This variant requires a sequence replay buffer that stores T-step sequences of raw LOB observations rather than single transitions; the LSTM hidden state is recomputed from the raw sequence during each training update to avoid stale-state bias from old network weights. Shared backbone implemented in `agents/recurrent_base.py`; instantiated separately as DRQN, RecurrentQRDQN, RecurrentIQN, RecurrentPPO. Primary citations: Sun et al. (2022); Hausknecht & Stone (2015).
 
 **Ablation matrix:**
 ```
@@ -200,16 +199,16 @@ RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kos
 | Regime | σ | Arrivals | Drift | Informed % | Primary test |
 |--------|---|----------|-------|------------|--------------|
 | Low-Vol | σ_low≈0.5bps | Poisson | 0 | 5% | GLFT recovery; SARSA>Q-learning |
-| High-Vol | σ_high≈2.0bps | Hawkes | 0 | 10% | CVaR advantage; LSTM>CNN |
-| Trending | σ_mid | Hawkes | μ≠0 | 20% | Inventory exploitation |
+| High-Vol | σ_high≈2.0bps | Hawkes | 0 | 10% | CVaR advantage; recurrent>snapshot |
+| Trending | σ_mid | Hawkes | μ≠0 | 20% | Inventory exploitation; recurrent temporal memory |
 | Flash Crash | σ_high+5σ | Spike | μ<0 | 40% | CVaR vs. DQN drawdown |
-| OOD Transfer | σ_high (trained σ_low) | Hawkes | 0 | 10% | IQN vs. QR-DQN degradation |
+| OOD Transfer | σ_high (trained σ_low) | Hawkes | 0 | 10% | Recurrent IQN vs. snapshot QR-DQN degradation |
 
 ---
 
 ## 9. Scoped Out
 
-**Macro/micro hierarchical agent (Patel 2018):** Patel's own results show multi-agent underperforms micro-only. LSTM encoder on DQN/QR-DQN/IQN subsumes the temporal LOB awareness without coordination overhead.
+**Macro/micro hierarchical agent (Patel 2018):** Patel's own results show multi-agent underperforms micro-only. Recurrent integration inside QR-DQN/IQN subsumes the temporal LOB awareness of the micro-agent without coordination overhead — and adds the distributional objective on top.
 
 **Adversarial RL (Spooner & Savani 2020):** Requires co-evolving adversary in ABIDES — a separate research project. CVaR achieves robustness tractably. Flash crash stress test is our robustness check.
 
@@ -228,7 +227,8 @@ RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kos
 | Ganesh et al. JPMorgan (2019) | Quadratic reward |
 | Gašperov et al. survey (2021) | RL motivation; autoencoders explicitly listed |
 | Gašperov & Kostanjčar signals (2021) | CNN encoder motivation; GLFT benchmarks |
-| Sun et al. (2022) | LSTM architecture; sparse reward; action space |
+| Sun et al. (2022) | DRQN-LSTM recurrent architecture; sparse reward; action space |
+| Hausknecht & Stone (2015) | Original DRQN architecture |
 | Kumar (2019) | DRQN>DQN only — no CNN comparison |
 | Patel (2018) | Macro/micro scoped out; private state features |
 | Bellemare et al. (2017) | C51; distributional Bellman equation |
