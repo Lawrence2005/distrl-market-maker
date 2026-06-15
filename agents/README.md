@@ -13,7 +13,7 @@ research contribution.
 | iqn.py         | Custom PyTorch | CVaR wrapper    | HC / CNN / AE (snapshot) + -LSTM (recurrent) |
 | cvar_policy.py | —              | —               | CVaR wrapper for QR-DQN/IQN|
 
-All neural agents (DQN, PPO, QR-DQN, IQN) accept any of the four encoders
+All neural agents (DQN, PPO, QR-DQN, IQN) accept any of the three snapshot encoders
 from `encoders/` via config. The LSTM encoder requires a sequence replay
 buffer — implement once in `training/train.py`, shared across all agents
 that use it.
