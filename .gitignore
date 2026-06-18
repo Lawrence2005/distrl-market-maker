@@ -12,6 +12,10 @@ env/
 .env
 
 # Data (too large for git — use DVC or store separately)
+data/synthetic/generated/
+data/crypto/raw/
+data/lobster/*.csv
+data/processed/
 data/raw/
 data/lobster/
 *.csv

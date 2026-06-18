@@ -1,0 +1,20 @@
+# Synthetic LOB generation parameters
+# Vary these to produce different market regimes
+
+symbol:    SYNTH
+date:      "2024-01-02"
+S0:        150.0        # initial mid-price ($)
+n_levels:  10           # LOB depth levels
+
+# Mid-price dynamics (AS 2008)
+sigma:     0.001        # volatility per event; increase for high-vol regime
+drift:     0.0          # set != 0 for trending regime test
+
+# Hawkes process (Bacry et al. 2015)
+mu:        0.5          # baseline arrival rate (events/sec)
+alpha:     0.3          # excitation magnitude
+beta:      1.0          # decay rate; branching ratio = alpha/beta = 0.3 < 1 ✓
+
+# Simulation
+T_seconds: 23400.0      # 6.5 trading hours (one full day)
+seed:      42

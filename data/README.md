@@ -3,12 +3,24 @@
 ## Structure
 ```
 data/
-├── lobster/          # Raw LOBSTER tick data (gitignored — too large)
-│   └── README.md     # Instructions for obtaining LOBSTER data
-├── calibration/      # Fitted background agent parameters
-│   ├── hawkes_params.json
+├── synthetic/
+│   ├── generate_synthetic_lobster.py
+│   ├── configs/
+│   │   └── synthetic_params.yaml
+│   └── generated/                    ← gitignored
+├── crypto/
+│   ├── fetch_binance_lob.py
+│   ├── configs/
+│   │   └── binance_params.yaml
+│   └── raw/                          ← gitignored
+├── lobster/                          ← gitignored when data arrives
+│   └── README.md                     ← instructions for obtaining LOBSTER data
+├── calibration/
+│   ├── hawkes_params.json            ← populated from whichever source runs first
 │   └── agent_params.json
-└── processed/        # Preprocessed LOB snapshots for AE pre-training
+├── processed/
+│   └── lob_snapshots.npy             ← gitignored, AE pre-training input
+└── process_lobster.py                ← handles all three sources via --data_dir
 ```
 
 ## LOBSTER Data

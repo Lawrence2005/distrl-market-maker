@@ -1,0 +1,28 @@
+# Binance LOB data fetch parameters
+# Used by data/crypto/fetch_binance_lob.py
+
+# Trading pair to fetch
+symbol: BTCUSDT         # options: BTCUSDT, ETHUSDT, SOLUSDT, etc.
+
+# LOB depth
+n_levels: 10            # number of bid/ask levels to record per snapshot
+
+# Collection settings
+n_snapshots: 5000       # total snapshots to collect (5000 × 0.5s ≈ 40 min)
+interval_sec: 0.5       # pause between fetches in seconds
+                        # don't go below 0.1 — Binance rate limit is 1200 req/min
+
+# Price scaling
+scale_price: true       # scale crypto prices to equity-like range (~$150)
+                        # set false if you want raw BTC prices (~$60,000–90,000)
+                        # scale_price=true makes the data compatible with your
+                        # ABIDES environment which expects equity-range prices
+
+# Output
+output_dir: data/crypto/raw
+
+# Notes:
+# - No API key required (Binance public endpoint)
+# - Run: python data/crypto/fetch_binance_lob.py
+# - To collect multiple symbols:
+#     python data/crypto/fetch_binance_lob.py --symbol ETHUSDT --n_snapshots 5000

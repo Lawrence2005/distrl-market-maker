@@ -1,0 +1,14 @@
+{
+  "arrival_rate_per_sec": 4.277506759837549,
+  "mean_interarrival_sec": 0.23368100852501206,
+  "std_interarrival_sec": 165.3698761147674,
+  "mean_order_size": 249.84714063061983,
+  "std_order_size": 111.92888842161742,
+  "min_order_size": 100,
+  "max_order_size": 400,
+  "cancellation_rate": 0.2005255165247972,
+  "execution_rate": 0.10145665987291691,
+  "buy_sell_ratio": 0.5011589337809216,
+  "n_events": 100092,
+  "total_time_sec": 23399.612348900482
+}
