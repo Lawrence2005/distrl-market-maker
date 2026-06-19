@@ -18,7 +18,6 @@ import numpy as np
 import json
 from typing import Optional
 
-
 class HawkesProcess:
     """
     Univariate Hawkes process with exponential kernel.
