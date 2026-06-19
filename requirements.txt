@@ -2,6 +2,7 @@
 abides-markets>=0.0.0
 gym>=0.18.0
 ray >= 2.55.1
+pomegranate >= 1.1.2
 
 # Deep learning
 torch>=2.0.0
