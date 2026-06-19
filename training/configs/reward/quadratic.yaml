@@ -1,3 +1,0 @@
-# Ganesh JPMorgan (2019) quadratic inventory penalty
-type: quadratic
-lambda: 0.1           # sweep: 0.01, 0.1, 1.0
