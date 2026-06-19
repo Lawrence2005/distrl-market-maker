@@ -112,14 +112,7 @@ r_t = η · spread_PnL_t − (1−η) · |Δq_t|
 ```
 Disincentivises trend-following. Source: Spooner et al. (2018).
 
-### B — Quadratic inventory penalty
-```
-r_t = spread_PnL_t − λ · q_t²
-λ = 0.1 (default); sweep {0.01, 0.1, 1.0}
-```
-Source: Ganesh et al. JPMorgan (2019).
-
-### C — Sparse liquidity reward
+### B — Sparse liquidity reward
 ```
 r_t = +1.0  if both sides fill
     = −0.5  if |q_t| > 0.8·Q_max
@@ -226,7 +219,7 @@ RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kos
 | Bacry et al. (2015) | Hawkes process model and calibration |
 | Spooner et al. (2018) | State features; asymmetric reward η; SARSA>Q-learning |
 | Beysolow II | RL motivation |
-| Ganesh et al. JPMorgan (2019) | Quadratic reward |
+| Ganesh et al. JPMorgan (2019) | Risk-Averse |
 | Gašperov et al. survey (2021) | RL motivation; autoencoders explicitly listed |
 | Gašperov & Kostanjčar signals (2021) | CNN encoder motivation; GLFT benchmarks |
 | Sun et al. (2022) | DRQN-LSTM recurrent architecture; sparse reward; action space |
