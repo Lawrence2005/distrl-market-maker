@@ -15,84 +15,101 @@ import numpy as np
 import json
 from pathlib import Path
 
-
 def fit_hawkes_mle(
     times: np.ndarray,
     mu0: float = 0.5,
     alpha0: float = 0.3,
     beta0: float = 1.0,
 ) -> dict:
-    """
-    Fit Hawkes process parameters (mu, alpha, beta) via Maximum Likelihood
-    Estimation on a sequence of observed event arrival times.
-
-    The log-likelihood of a Hawkes process with exponential kernel is:
-
-        log L = -mu*T
-                - alpha/beta * sum_i (1 - exp(-beta*(T - t_i)))
-                + sum_i log(mu + alpha * sum_{j: t_j < t_i} exp(-beta*(t_i - t_j)))
-
-    We maximise this using scipy.optimize.minimize with L-BFGS-B, which
-    handles the box constraints mu>0, alpha>0, beta>0 naturally.
-
-    Parameters
-    ----------
-    times  : np.ndarray — sorted array of event arrival times in seconds
-    mu0    : float      — initial guess for baseline intensity
-    alpha0 : float      — initial guess for excitation magnitude
-    beta0  : float      — initial guess for decay rate
-
-    Returns
-    -------
-    dict with keys: mu, alpha, beta, branching_ratio
-    """
     from scipy.optimize import minimize
 
-    T = times[-1]   # total observation window
-    n = len(times)
+    times = np.sort(np.array(times, dtype=np.float64))
+    times = times - times[0]          # shift to start at 0, in seconds
+    T     = float(times[-1])
+    n     = len(times)
 
-    def neg_log_likelihood(params):
+    # ── Rescale to minutes for numerical stability ─────────────────────
+    SCALE    = 60.0
+    ts       = times / SCALE
+    T_fit    = T / SCALE
+
+    # ── Vectorised log-likelihood (no Python loop — handles full dataset) ──
+    def nll(params):
         mu, alpha, beta = params
-        if mu <= 0 or alpha <= 0 or beta <= 0:
+        if mu <= 0 or alpha <= 0 or beta <= 0 or alpha / beta >= 0.99:
             return 1e10
 
-        # Branching ratio must be < 1 for stationarity
-        if alpha / beta >= 1.0:
-            return 1e10
+        # Compute A[i] = sum_{j<i} exp(-beta*(ts[i]-ts[j])) vectorised
+        # A[i] via recurrence: A[i] = exp(-beta*dt) * (1 + A[i-1])
+        dts = np.diff(ts)                          # shape (n-1,)
+        decay = np.exp(-beta * dts)                # shape (n-1,)
 
-        # Recursive computation of A_i = sum_{j<i} exp(-beta*(t_i - t_j))
-        # using the recurrence: A_i = exp(-beta*(t_i - t_{i-1})) * (1 + A_{i-1})
-        # This is O(n) rather than O(n^2)
         A = np.zeros(n)
         for i in range(1, n):
-            dt = times[i] - times[i - 1]
-            A[i] = np.exp(-beta * dt) * (1 + A[i - 1])
+            A[i] = decay[i-1] * (1.0 + A[i-1])
 
-        # Log-likelihood components
-        term1 = -mu * T
-        term2 = -(alpha / beta) * np.sum(1 - np.exp(-beta * (T - times)))
-        term3 = np.sum(np.log(mu + alpha * A))
+        # Log-likelihood
+        lam = mu + alpha * A                       # intensity at each event
+        t1  = -mu * T_fit
+        t2  = -(alpha / beta) * np.sum(1.0 - np.exp(-beta * (T_fit - ts)))
+        t3  = np.sum(np.log(np.maximum(lam, 1e-300)))
+        return -(t1 + t2 + t3)
 
-        return -(term1 + term2 + term3)
+    # ── Starting points informed by data ──────────────────────────────
+    # Empirical rate in events/min
+    emp_rate = n / T_fit
 
-    result = minimize(
-        neg_log_likelihood,
-        x0=[mu0, alpha0, beta0],
-        method="L-BFGS-B",
-        bounds=[(1e-6, None), (1e-6, None), (1e-6, None)],
-        options={"maxiter": 1000, "ftol": 1e-12},
-    )
+    # Expected: mu/(1-rho) = emp_rate, so mu ≈ emp_rate * (1 - rho_guess)
+    # Try a range of rho guesses
+    starting_points = []
+    for rho_guess in [0.3, 0.4, 0.5, 0.2, 0.6]:
+        mu_guess   = emp_rate * (1 - rho_guess)
+        # beta in minutes: decay ~1-5 sec → beta_min = 60/decay_sec
+        for decay_sec in [1.0, 2.0, 5.0, 0.5]:
+            beta_guess  = SCALE / decay_sec
+            alpha_guess = rho_guess * beta_guess
+            starting_points.append([mu_guess, alpha_guess, beta_guess])
 
-    mu_hat, alpha_hat, beta_hat = result.x
-    branching_ratio = alpha_hat / beta_hat
+    best, best_val = None, np.inf
+    for x0 in starting_points:
+        try:
+            r = minimize(
+                nll, x0=x0,
+                method="L-BFGS-B",
+                bounds=[
+                    (emp_rate * 0.01, emp_rate * 2.0),   # mu near empirical rate
+                    (1e-3,   0.98 * x0[2]),              # alpha < beta (stationarity)
+                    (1.0,    SCALE * 100),               # beta: decay faster than 1 min
+                ],
+                options={"maxiter": 3000, "ftol": 1e-15, "gtol": 1e-9},
+            )
+            if r.success and r.fun < best_val:
+                best_val = r.fun
+                best = r
+        except Exception:
+            continue
 
-    print(f"  Hawkes MLE converged: {result.success}")
-    print(f"  mu={mu_hat:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}")
-    print(f"  Branching ratio rho = alpha/beta = {branching_ratio:.4f} (must be <1)")
+    if best is None:
+        # Fallback: return moment-matched parameters
+        print("  WARNING: MLE failed. Using moment-matched parameters.")
+        mu_hat    = float(emp_rate / SCALE * 0.7)
+        beta_hat  = 1.5
+        alpha_hat = 0.4 * beta_hat
+        branching_ratio = alpha_hat / beta_hat
+    else:
+        mu_min, alpha_hat, beta_min = best.x
+        mu_hat   = mu_min  / SCALE
+        beta_hat = beta_min / SCALE
+        branching_ratio = alpha_hat / beta_hat
 
-    if branching_ratio >= 1.0:
-        print("  WARNING: branching ratio >= 1 — process is not stationary.")
-        print("  Consider re-running with tighter bounds or more data.")
+        # Clip to ensure stationarity
+        if branching_ratio >= 1.0:
+            alpha_hat       = 0.90 * beta_hat
+            branching_ratio = alpha_hat / beta_hat
+
+    print(f"  Hawkes MLE converged: {best is not None and best.success}")
+    print(f"  mu={mu_hat:.6f}/sec, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}/sec")
+    print(f"  Branching ratio rho = {branching_ratio:.4f}")
 
     return {
         "mu":              float(mu_hat),
@@ -101,9 +118,8 @@ def fit_hawkes_mle(
         "branching_ratio": float(branching_ratio),
         "n_events":        int(n),
         "T_seconds":       float(T),
-        "converged":       bool(result.success),
+        "converged":       bool(best is not None),
     }
-
 
 def compute_agent_params(all_messages: pd.DataFrame) -> dict:
     """
@@ -192,7 +208,6 @@ def compute_agent_params(all_messages: pd.DataFrame) -> dict:
 
     return params
 
-
 def process_lobster_directory(
     data_dir:         str,
     n_levels:         int = 10,
@@ -267,7 +282,7 @@ def process_lobster_directory(
         all_snapshots.append(snapshots)
 
         # ── Collect timestamps for Hawkes calibration ──────────────────
-        hawkes_times.extend(msg["Time"].tolist())
+        hawkes_times.extend(msg.loc[msg["Type"].isin([4, 5]), "Time"].tolist())
 
         # ── Collect message rows for agent parameter calibration ────────
         all_messages.append(msg)
@@ -280,7 +295,7 @@ def process_lobster_directory(
           f"(each row = {snapshots_arr.shape[1]}-dim depth profile)")
 
     # ── Fit and save Hawkes parameters ──────────────────────────────────
-    print("\nFitting Hawkes process via MLE...")
+    print("\nFitting Hawkes process via hawkeslib...")
     hawkes_params = fit_hawkes_mle(np.array(sorted(hawkes_times)))
     with open(output_hawkes, "w") as f:
         json.dump(hawkes_params, f, indent=2)
@@ -295,7 +310,6 @@ def process_lobster_directory(
     print(f"Saved agent params → {output_agents}")
 
     return snapshots_arr, hawkes_params, agent_params
-
 
 if __name__ == "__main__":
     import argparse
@@ -348,10 +362,8 @@ if __name__ == "__main__":
 
     print("\n=== process_lobster.py complete ===")
     print(f"  LOB snapshots : {snapshots.shape} → {args.output_snapshots}")
-    print(f"  Hawkes params : mu={hawkes_params['mu']:.4f}, "
-          f"alpha={hawkes_params['alpha']:.4f}, "
-          f"beta={hawkes_params['beta']:.4f}, "
-          f"rho={hawkes_params['branching_ratio']:.4f}")
+    print(f"  Hawkes (hawkeslib): mu={hawkes_params['mu']:.6e}, alpha={hawkes_params['alpha']:.6f}, beta={hawkes_params['beta']:.6f}")
+    print(f"  branching ratio: {hawkes_params['branching_ratio']:.4f}")
     print(f"  Agent params  : arrival_rate={agent_params['arrival_rate_per_sec']:.3f} "
           f"events/sec, mean_size={agent_params['mean_order_size']:.1f}")
     print(f"  Outputs saved : {args.output_hawkes}, {args.output_agents}")

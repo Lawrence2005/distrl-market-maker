@@ -1,98 +1,199 @@
 """
+envs/hawkes_arrivals.py
+
 Hawkes process order arrival model.
 
-Replaces ABIDES's default Poisson arrivals with a self-exciting Hawkes
-process, which produces the bursty, clustered order flow observed in
-real limit order books.
-
-A Hawkes process has intensity:
-    lambda(t) = mu + sum_j phi(t - t_j)
-where phi is the excitation kernel. We use an exponential kernel:
-    phi(t) = alpha * exp(-beta * t)
-with branching ratio rho = alpha / beta < 1 for stationarity.
-
-Parameters (mu, alpha, beta) are calibrated via MLE on LOBSTER tick data.
-See data/calibration/hawkes_params.json for fitted values.
-
-Why Hawkes over Poisson:
-  - Poisson: constant arrival rate — unrealistic; misses clustering
-  - Queue-reactive (Huang et al. 2015): intensity depends on queue size —
-    empirically validated but harder to calibrate
-  - Hawkes (this module): self-exciting; each arrival temporarily raises
-    future intensity — captures the same clustering empirically documented
-    by Huang et al. with a tractable mathematical framework
+Simulation via Ogata thinning — no external library dependency.
+Parameters loaded from data/calibration/hawkes_params.json,
+which is fitted by data/process_lobster.py.
 
 References:
-  PRIMARY:    Bacry, Mastromatteo & Muzy (2015) 'Hawkes Processes in Finance'
-              Canonical reference for self-exciting order flow in finance;
-              derives multivariate Hawkes for bid/ask flow; calibration via MLE.
-  MOTIVATION: Huang, Lehalle & Rosenbaum (2015) — empirically documents
-              arrival clustering in real LOBs via queue-reactive model;
-              motivates Hawkes over Poisson even though they use a different
-              (queue-reactive) formulation.
+    Bacry, Mastromatteo & Muzy (2015) — Hawkes Processes in Finance
+    Huang, Lehalle & Rosenbaum (2015) — empirical motivation
 
 Week 2 deliverable.
 """
+
 import numpy as np
-from typing import Tuple, Optional
+import json
+from typing import Optional
 
 
 class HawkesProcess:
     """
     Univariate Hawkes process with exponential kernel.
 
+    Intensity:
+        λ(t) = μ + α · Σ_{t_j < t} exp(−β · (t − t_j))
+
     Parameters
     ----------
-    mu    : float — baseline intensity (events/sec)
+    mu    : float — baseline intensity (events/second)
     alpha : float — excitation magnitude
-    beta  : float — decay rate of excitation kernel
+    beta  : float — decay rate (1/second)
     """
 
     def __init__(self, mu: float, alpha: float, beta: float):
-        assert alpha / beta < 1, "Branching ratio rho = alpha/beta must be < 1 for stationarity"
+        assert mu > 0,    f"mu must be positive, got {mu}"
+        assert alpha > 0, f"alpha must be positive, got {alpha}"
+        assert beta > 0,  f"beta must be positive, got {beta}"
+        assert alpha / beta < 1.0, (
+            f"Branching ratio α/β = {alpha/beta:.4f} ≥ 1. "
+            f"Process not stationary. Reduce alpha or increase beta."
+        )
         self.mu    = mu
         self.alpha = alpha
         self.beta  = beta
 
-    def intensity(self, t: float, history: np.ndarray) -> float:
-        """
-        Compute current intensity lambda(t) given event history.
+    @property
+    def branching_ratio(self) -> float:
+        return self.alpha / self.beta
 
-        lambda(t) = mu + sum_{t_j < t} alpha * exp(-beta * (t - t_j))
-        """
-        if len(history) == 0:
-            return self.mu
-        past = history[history < t]
-        excitation = self.alpha * np.sum(np.exp(-self.beta * (t - past)))
-        return self.mu + excitation
+    @property
+    def mean_rate(self) -> float:
+        """Theoretical mean arrival rate: μ / (1 − ρ)"""
+        return self.mu / (1.0 - self.branching_ratio)
 
-    def simulate(self, T: float, seed: Optional[int] = None) -> np.ndarray:
+    def simulate(self, T: float, seed: int = 42) -> np.ndarray:
         """
-        Simulate Hawkes process over [0, T] via Ogata's thinning algorithm.
+        Simulate Hawkes process over [0, T] via Ogata thinning.
 
-        Returns array of event times.
+        Parameters
+        ----------
+        T    : float — simulation horizon in seconds
+        seed : int   — random seed for reproducibility
+
+        Returns
+        -------
+        np.ndarray of event arrival times in [0, T], starting near 0
         """
-        # TODO: implement Ogata thinning
-        raise NotImplementedError
+        rng    = np.random.default_rng(seed)
+        times  = []
+        t      = 0.0
+
+        while t < T:
+            # Upper bound on intensity at current time
+            if len(times) == 0:
+                lam_upper = self.mu
+            else:
+                t_arr     = np.array(times)
+                lam_upper = self.mu + self.alpha * np.sum(
+                    np.exp(-self.beta * (t - t_arr))
+                )
+
+            # Propose next event time
+            dt_prop  = rng.exponential(1.0 / lam_upper)
+            t_prop   = t + dt_prop
+
+            if t_prop > T:
+                break
+
+            # True intensity at proposed time
+            if len(times) == 0:
+                lam_true = self.mu
+            else:
+                t_arr    = np.array(times)
+                lam_true = self.mu + self.alpha * np.sum(
+                    np.exp(-self.beta * (t_prop - t_arr))
+                )
+
+            # Accept with probability lam_true / lam_upper
+            if rng.uniform() < lam_true / lam_upper:
+                times.append(t_prop)
+
+            t = t_prop
+
+        return np.array(times) if times else np.array([0.0])
 
     @classmethod
     def from_lobster(cls, params_path: str) -> "HawkesProcess":
-        """Load calibrated parameters from data/calibration/hawkes_params.json."""
-        import json
+        """
+        Load calibrated parameters from data/calibration/hawkes_params.json.
+
+        Usage:
+            hp = HawkesProcess.from_lobster("data/calibration/hawkes_params.json")
+            events = hp.simulate(T=3900, seed=42)
+        """
         with open(params_path) as f:
             p = json.load(f)
-        return cls(mu=p["mu"], alpha=p["alpha"], beta=p["beta"])
+
+        mu    = float(p["mu"])
+        alpha = float(p["alpha"])
+        beta  = float(p["beta"])
+        rho   = alpha / beta
+
+        print(
+            f"Loaded Hawkes params: mu={mu:.6f}, alpha={alpha:.4f}, "
+            f"beta={beta:.4f}, rho={rho:.4f}"
+        )
+
+        # Safety check — if rho is too close to 1, scale alpha down
+        if rho >= 0.95:
+            print(
+                f"  WARNING: rho={rho:.4f} is close to 1 (near non-stationary). "
+                f"Clipping alpha to give rho=0.80."
+            )
+            alpha = 0.80 * beta
+            rho   = alpha / beta
+
+        return cls(mu=mu, alpha=alpha, beta=beta)
+
+    @classmethod
+    def from_fit(cls, times: np.ndarray) -> "HawkesProcess":
+        """
+        Fit parameters directly from arrival times and return
+        a ready-to-use HawkesProcess. Wraps the scipy MLE fitter.
+        """
+        from data.process_lobster import fit_hawkes_mle
+        params = fit_hawkes_mle(times)
+        return cls(
+            mu=params["mu"],
+            alpha=params["alpha"],
+            beta=params["beta"],
+        )
 
 
-class MultivariateHawkes:
-    """
-    Bivariate Hawkes process for bid-side and ask-side arrivals.
+if __name__ == "__main__":
+    import os
 
-    Each side can excite itself (self-excitation) and the other side
-    (cross-excitation) — models the empirical finding that a large
-    bid-side order burst often triggers ask-side responses.
+    print("=== HawkesProcess validation ===\n")
 
-    Reference: Bacry et al. (2015) Section 3 — multivariate extension.
-    """
-    # TODO: implement
-    pass
+    # ── Test 1: simulate from known parameters ────────────────────────
+    print("Test 1: simulate from known parameters")
+    hp     = HawkesProcess(mu=0.5, alpha=0.6, beta=1.5)
+    events = hp.simulate(T=3900.0, seed=42)
+
+    expected_rate = hp.mean_rate
+    actual_rate   = len(events) / 3900.0
+
+    print(f"  Arrivals:      {len(events)}")
+    print(f"  Expected rate: {expected_rate:.3f} events/sec")
+    print(f"  Actual rate:   {actual_rate:.3f} events/sec")
+    print(f"  Branching ratio: {hp.branching_ratio:.3f}")
+
+    assert len(events) > 0, "No events generated"
+    assert abs(actual_rate - expected_rate) / expected_rate < 0.15, (
+        f"Rate {actual_rate:.3f} deviates >15% from expected {expected_rate:.3f}"
+    )
+    print("  ✓ Passed\n")
+
+    # ── Test 2: determinism ───────────────────────────────────────────
+    print("Test 2: determinism — same seed gives same output")
+    ev1 = hp.simulate(T=3900.0, seed=42)
+    ev2 = hp.simulate(T=3900.0, seed=42)
+    assert np.allclose(ev1, ev2), "Same seed produced different output"
+    print("  ✓ Passed\n")
+
+    # ── Test 3: from_lobster() ────────────────────────────────────────
+    params_path = "data/calibration/hawkes_params.json"
+    if os.path.exists(params_path):
+        print("Test 3: from_lobster()")
+        hp3 = HawkesProcess.from_lobster(params_path)
+        ev3 = hp3.simulate(T=3900, seed=42)
+        print(f"  {len(ev3)} arrivals from calibrated params")
+        assert len(ev3) > 0
+        print("  ✓ Passed\n")
+    else:
+        print(f"Test 3: Skipped — run data/process_lobster.py first\n")
+
+    print("=== All tests passed ===")
