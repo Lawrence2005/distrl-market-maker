@@ -13,6 +13,9 @@ import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
 from typing import Optional, Tuple, Dict, Any
+import yaml
+
+from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
 
 # Action space: bid/ask offsets in ticks
 # δ ∈ {−4, −3, −2, −1, 0, +1, +2, +3, +4} → 9 levels per side → 81 total
@@ -23,7 +26,6 @@ N_OFFSET_LEVELS = len(TICK_OFFSETS)
 _PRICE_HISTORY_MAXLEN  = 500
 _VOLUME_HISTORY_MAXLEN = 500
 _LOB_HISTORY_MAXLEN    = 100
-
 
 class LOBMarketMakingEnv(gym.Env):
     """
@@ -58,7 +60,7 @@ class LOBMarketMakingEnv(gym.Env):
     -----------------
     Three abstract hooks must be implemented when attaching the real simulator:
 
-        _extract_mid_price(abides_obs)        → float
+        _extract_mid_price(abides_obs)         → float
         _encode_abides_action(bid, ask)        → abides action object
         _parse_abides_step(abides_info)        → dict with keys:
             bid_qty, ask_qty, signed_volume, lob_snapshot
@@ -72,32 +74,37 @@ class LOBMarketMakingEnv(gym.Env):
 
     def __init__(
         self,
-        reward_type:  str   = "asymmetric",
-        eta:          float = 0.5,
-        lam:          float = 0.1,
-        Q_max:        int   = 10,
-        tick_size:    float = 0.01,
-        episode_len:  int   = 3900,
-        kappa:        float = 1.0,
-        n_lob_levels: int   = 3,
-        seed:         int   = 42,
+        config: str | None = None,
+        reward_type: str | None = None,
+        eta: float | None = None,
+        lam: float | None = None,
+        Q_max: int | None = None,
+        tick_size: float | None = None,
+        episode_len: int | None = None,
+        kappa: float | None = None,
+        n_lob_levels: int | None = None,
+        seed: int | None = None
     ):
         super().__init__()
 
-        assert reward_type in ("asymmetric", "quadratic", "sparse"), (
-            f"reward_type must be 'asymmetric', 'quadratic', or 'sparse', "
-            f"got '{reward_type}'"
-        )
+        self._abides_env = AbidesMarketMakingEnv(background_config="rmsc04")
 
-        self.reward_type  = reward_type
-        self.eta          = eta
-        self.lam          = lam
-        self.Q_max        = Q_max
-        self.tick_size    = tick_size
-        self.episode_len  = episode_len
-        self.kappa        = kappa
-        self.n_lob_levels = n_lob_levels
-        self.seed_val     = seed
+        cfg = {}
+        if config is not None:
+            with open(config, "r") as f:
+                cfg = yaml.safe_load(f)
+
+        self.reward_type  = reward_type  if reward_type  is not None else cfg.get("reward_type", "asymmetric")
+        self.eta          = eta          if eta          is not None else cfg.get("eta", 0.5)
+        self.lam          = lam          if lam          is not None else cfg.get("lam", 0.1)
+        self.Q_max        = Q_max        if Q_max        is not None else cfg.get("Q_max", 10)
+        self.tick_size    = tick_size    if tick_size    is not None else cfg.get("tick_size", 0.01)
+        self.episode_len  = episode_len  if episode_len  is not None else cfg.get("episode_len", 3900)
+        self.kappa        = kappa        if kappa        is not None else cfg.get("kappa", 1.0)
+        self.n_lob_levels = n_lob_levels if n_lob_levels is not None else cfg.get("n_lob_levels", 3)
+        self.seed_val     = seed         if seed         is not None else cfg.get("seed", 42)
+                        
+        assert self.reward_type in ("asymmetric", "quadratic", "sparse"), (f"reward_type must be 'asymmetric', 'quadratic', or 'sparse', "f"got '{self.reward_type}'")
 
         # ── Action space: two 9-dim heads (MultiDiscrete) ─────────────
         self.action_space = spaces.MultiDiscrete([N_OFFSET_LEVELS, N_OFFSET_LEVELS])
@@ -200,7 +207,7 @@ class LOBMarketMakingEnv(gym.Env):
         ├──────────────────┼────────────────────────────────────────────────┤
         │  0               │ bid-ask spread / tick, clipped [0, 10]         │
         │  1               │ mid log-return this step / tick, clipped ±10   │
-        │  2               │ queue imbalance I=(V_b−V_a)/(V_b+V_a) ∈ [−1,1]│
+        │  2               │ queue imbalance I=(V_b−V_a)/(V_b+V_a) ∈ [−1,1] │
         │  3               │ signed volume, normalised, clipped ±1          │
         │  4               │ realized vol (20-step), scaled by tick         │
         │  5               │ RSI (14-step), normalised to [−1, +1]          │
@@ -209,8 +216,8 @@ class LOBMarketMakingEnv(gym.Env):
         │  base+0          │ inventory q / Q_max ∈ [−1, +1]                 │
         │  base+1          │ active bid distance δ_b / 4 ∈ [−1, +1]         │
         │  base+2          │ active ask distance δ_a / 4 ∈ [−1, +1]         │
-        │  base+3          │ outstanding bid offset from mid, normalised     │
-        │  base+4          │ outstanding ask offset from mid, normalised     │
+        │  base+3          │ outstanding bid offset from mid, normalised    │
+        │  base+4          │ outstanding ask offset from mid, normalised    │
         │  base+5          │ time remaining τ = (T−t)/T ∈ [0, 1]            │
         └──────────────────┴────────────────────────────────────────────────┘
 
@@ -223,40 +230,41 @@ class LOBMarketMakingEnv(gym.Env):
 
         # [0] Bid-ask spread normalised by tick_size, clipped [0, 10]
         #     Uses outstanding quotes as best-bid/ask proxy.
-        #     TODO: replace with best bid/ask from ABIDES LOB snapshot.
-        if self._outstanding_bid > 0 and self._outstanding_ask > 0:
-            raw_spread = (self._outstanding_ask - self._outstanding_bid) / self.tick_size
-        else:
-            raw_spread = 0.0
+        raw_spread = 0.0
+        if self._lob_history:
+            snap = self._lob_history[-1]
+
+            bid_prices, ask_prices = snap["bid_prices"], snap["ask_prices"]
+
+            if len(bid_prices) > 0 and len(ask_prices) > 0:
+                best_bid, best_ask = bid_prices[0], ask_prices[0]
+
+                raw_spread = (best_ask - best_bid) / self.tick_size
         obs[0] = float(np.clip(raw_spread / 10.0, 0.0, 10.0))
 
         # [1] Mid-price log-return this step, scaled by tick_size, clipped ±10
+        log_ret = 0.0
         if self._prev_mid > 0 and self._mid_price > 0:
             log_ret = np.log(self._mid_price / self._prev_mid) / self.tick_size
-        else:
-            log_ret = 0.0
         obs[1] = float(np.clip(log_ret, -10.0, 10.0))
 
         # [2] Queue imbalance I = (V_b − V_a) / (V_b + V_a)
         #     Populated from _lob_history once ABIDES is wired in.
+        imbalance = 0.0
         if self._lob_history:
             snap      = self._lob_history[-1]
             bid_vol   = float(np.sum(snap.get("bid_sizes", [0])))
             ask_vol   = float(np.sum(snap.get("ask_sizes", [0])))
             total_vol = bid_vol + ask_vol
             imbalance = (bid_vol - ask_vol) / total_vol if total_vol > 0 else 0.0
-        else:
-            imbalance = 0.0
         obs[2] = float(np.clip(imbalance, -1.0, 1.0))
 
         # [3] Signed volume normalised by rolling max, clipped ±1
-        #     TODO: populate _volume_history from ABIDES trade feed.
+        obs[3] = 0.0
         if self._volume_history:
             signed_vol = float(self._volume_history[-1])
             vol_scale  = max(abs(v) for v in self._volume_history) + 1e-8
             obs[3]     = float(np.clip(signed_vol / vol_scale, -1.0, 1.0))
-        else:
-            obs[3] = 0.0
 
         # [4] Realized volatility (20-step window), scaled by tick_size, clipped [0, 50]
         obs[4] = float(np.clip(
@@ -272,6 +280,8 @@ class LOBMarketMakingEnv(gym.Env):
         # Normalised per-side so proportions across levels sum to 1.
         # (Per-side normalisation is standard in LOB ML literature;
         #  cross-side normalisation conflates bid and ask liquidity.)
+        bid_depths = np.zeros(self.n_lob_levels, dtype=np.float32)
+        ask_depths = np.zeros(self.n_lob_levels, dtype=np.float32)
         if self._lob_history:
             snap       = self._lob_history[-1]
             bid_depths = np.asarray(
@@ -292,9 +302,6 @@ class LOBMarketMakingEnv(gym.Env):
             ask_total  = ask_depths.sum() + 1e-8
             bid_depths = bid_depths / bid_total
             ask_depths = ask_depths / ask_total
-        else:
-            bid_depths = np.zeros(self.n_lob_levels, dtype=np.float32)
-            ask_depths = np.zeros(self.n_lob_levels, dtype=np.float32)
 
         obs[6 : 6 + self.n_lob_levels]                          = bid_depths
         obs[6 + self.n_lob_levels : 6 + 2 * self.n_lob_levels] = ask_depths
@@ -462,82 +469,51 @@ class LOBMarketMakingEnv(gym.Env):
 
         self._reset_state()
 
-        # ── ABIDES-Gym sub-environment reset (stub) ───────────────────
-        # TODO: uncomment and implement when wiring ABIDES:
-        #
-        #   obs_abides, info_abides = self._abides_env.reset(seed=seed)
-        #   self._mid_price = self._extract_mid_price(obs_abides)
-        #   lob_snap = self._parse_abides_step(info_abides).get("lob_snapshot", {})
-        #   if lob_snap:
-        #       self._lob_history.append(lob_snap)
-        #
-        # Until then: synthetic GBM initialisation at $100.
-        self._mid_price = 100.0
+        _ = self._abides_env.reset()  # returns processed obs array — ignore it
+
+        # Read raw_state directly from the gym agent after reset
+        # raw_state is a deque; [-1] is the most recent snapshot
+        raw_state = self._abides_env.gym_agent.raw_state[-1]
+
+        self._mid_price = self._extract_mid_price(raw_state)
         self._prev_mid  = self._mid_price
         self._price_history.append(self._mid_price)
+
+        parsed = self._parse_abides_step(raw_state)
+        if parsed["lob_snapshot"]["bid_sizes"]:
+            self._lob_history.append(parsed["lob_snapshot"])
 
         obs  = self._get_obs()
         info = {
             "step":      self._step,
             "inventory": self._inventory,
             "mid_price": self._mid_price,
-            "cash":      self._cash,
+            "cash":      parsed["cash"],
         }
         return obs, info
 
-    def step(
-        self,
-        action: np.ndarray,
-    ) -> Tuple[np.ndarray, float, bool, bool, dict]:
-        """
-        Execute one environment step.
-
-        Parameters
-        ----------
-        action : array-like of shape (2,)
-            action[0] — bid-offset index ∈ [0, 8]  → TICK_OFFSETS[action[0]]
-            action[1] — ask-offset index ∈ [0, 8]  → TICK_OFFSETS[action[1]]
-
-        Returns
-        -------
-        obs        : np.ndarray — next observation
-        reward     : float
-        terminated : bool — True if episode ended naturally (not used here;
-                             reserved for ABIDES market-close signals)
-        truncated  : bool — True if episode hit episode_len
-        info       : dict — rich metadata for logging / evaluation
-        """
-        # ── Decode action → bid/ask prices ────────────────────────────
+    def step(self, action):
         bid_idx, ask_idx = int(action[0]), int(action[1])
-        bid_offset = int(TICK_OFFSETS[bid_idx])   # ticks below mid
-        ask_offset = int(TICK_OFFSETS[ask_idx])   # ticks above mid
-
-        bid_price = self._mid_price - bid_offset * self.tick_size
-        ask_price = self._mid_price + ask_offset * self.tick_size
-
+        bid_offset = int(TICK_OFFSETS[bid_idx])
+        ask_offset = int(TICK_OFFSETS[ask_idx])
+        bid_price  = self._mid_price - bid_offset * self.tick_size
+        ask_price  = self._mid_price + ask_offset * self.tick_size
         self._bid_dist = float(bid_offset)
         self._ask_dist = float(ask_offset)
 
-        # ── Submit quotes to ABIDES, receive fills (stub) ─────────────
-        # TODO: replace block below with real ABIDES step:
-        #
-        #   abides_action = self._encode_abides_action(bid_price, ask_price)
-        #   obs_ab, _, _, _, info_ab = self._abides_env.step(abides_action)
-        #   parsed     = self._parse_abides_step(info_ab)
-        #   bid_filled = parsed["bid_qty"]
-        #   ask_filled = parsed["ask_qty"]
-        #   signed_vol = parsed["signed_volume"]
-        #   lob_snap   = parsed["lob_snapshot"]
-        #   new_mid    = self._extract_mid_price(obs_ab)
-        #
-        # Synthetic GBM mid-price; zero fills until ABIDES is wired:
-        bid_filled = 0
-        ask_filled = 0
-        signed_vol = 0
-        lob_snap   = {}
-        new_mid    = self._mid_price * np.exp(
-            self._rng.normal(0.0, self.tick_size / self._mid_price)
-        )
+        abides_action       = self._encode_abides_action(bid_price, ask_price)
+        _, _, done, _       = self._abides_env.step(abides_action)  # 4-tuple old gym API
+
+        # Read raw_state from agent after step (same pattern as reset)
+        raw_state = self._abides_env.gym_agent.raw_state[-1]
+
+        parsed    = self._parse_abides_step(raw_state)
+        new_mid   = self._extract_mid_price(raw_state)
+
+        bid_filled = parsed["bid_qty"]
+        ask_filled = parsed["ask_qty"]
+        signed_vol = parsed["signed_volume"]
+        lob_snap   = parsed["lob_snapshot"]
 
         # ── Update internal state ──────────────────────────────────────
         self._prev_mid  = self._mid_price
@@ -632,74 +608,105 @@ class LOBMarketMakingEnv(gym.Env):
     def close(self) -> None:
         """
         Clean up resources.
-
-        TODO: call self._abides_env.close() once ABIDES is wired in.
         """
-        pass
+        if hasattr(self, "_abides_env"):
+            self._abides_env.close()
 
     # ------------------------------------------------------------------
     # ABIDES-Gym wiring hooks  (implement when attaching real simulator)
     # ------------------------------------------------------------------
-
-    def _extract_mid_price(self, abides_obs: np.ndarray) -> float:
+    def _extract_mid_price(self, raw_state: dict) -> float:
         """
-        Extract mid-price from an ABIDES-Gym observation vector.
+        Extract mid-price from a single ABIDES raw_state dict.
 
-        The ABIDES MarketMakingEnvironment observation layout must be
-        confirmed from abides_gym/envs/market_making_environment.py;
-        typically index 0 is best_bid and index 1 is best_ask.
-
-        Example (update indices once schema is confirmed):
-            best_bid = abides_obs[0]
-            best_ask = abides_obs[1]
-            return 0.5 * (best_bid + best_ask)
-
-        TODO: implement once ABIDES observation schema is confirmed.
+        raw_state["parsed_mkt_data"]["bids"] is a list of (price, volume) tuples,
+        best-first. "last_transaction" is the scalar fallback when book is empty.
         """
-        raise NotImplementedError(
-            "_extract_mid_price: wire in ABIDES observation schema. "
-            "See abides_gym/envs/market_making_environment.py for obs layout."
+        mkt      = raw_state["parsed_mkt_data"][-1]   # ← deque, take latest
+        bids             = mkt["bids"]
+        asks             = mkt["asks"]
+        last_transaction = mkt["last_transaction"]
+
+        best_bid = bids[0][0] if len(bids) > 0 else last_transaction
+        best_ask = asks[0][0] if len(asks) > 0 else last_transaction
+
+        return 0.5 * (best_bid + best_ask) / 100.0
+
+    def _encode_abides_action(self, bid_price: float, ask_price: float) -> int:
+        """
+        Store bid/ask prices (dollars) on the sub-env for pickup by
+        _map_action_space_to_ABIDES_SIMULATOR_SPACE, then return the
+        integer token that ABIDES action_space.contains() expects.
+        """
+        self._abides_env._pending_bid_price = int(round(bid_price * 100))
+        self._abides_env._pending_ask_price = int(round(ask_price * 100))
+        return 0  # dummy token, always 0
+
+    def _parse_abides_step(self, raw_state: dict) -> dict:
+        """
+        Extract fill and market data from a single ABIDES raw_state dict.
+
+        raw_state["internal_data"]["inter_wakeup_executed_orders"] is a list
+        of Order objects with attributes:
+            .fill_price  (int, in ABIDES cent units)
+            .quantity    (int, always positive)
+            .side        "BID" | "ASK"  (or check direction from order_status)
+
+        bids/asks are lists of (price, volume) tuples, best-first, up to
+        subscribe_num_levels deep (default 10).
+        """
+        mkt      = raw_state["parsed_mkt_data"][-1]   # ← deque, take latest
+        internal = raw_state["internal_data"]
+
+        bids             = mkt["bids"]
+        asks             = mkt["asks"]
+
+        fills     = internal.get("inter_wakeup_executed_orders", [])
+        bid_qty   = sum(o.quantity for o in fills if o.side.value == "BID")
+        ask_qty   = sum(o.quantity for o in fills if o.side.value == "ASK")
+        signed_volume = bid_qty - ask_qty
+
+        K = self.n_lob_levels
+        lob_snapshot = {
+            "bid_prices": [b[0] / 100.0 for b in bids[:K]],
+            "bid_sizes":  [b[1]         for b in bids[:K]],
+            "ask_prices": [a[0] / 100.0 for a in asks[:K]],
+            "ask_sizes":  [a[1]         for a in asks[:K]],
+        }
+
+        return {
+            "bid_qty":       bid_qty,
+            "ask_qty":       ask_qty,
+            "signed_volume": signed_volume,
+            "lob_snapshot":  lob_snapshot,
+            "cash":          internal.get("cash", 0.0),
+            "holdings":      internal.get("holdings", 0),
+        }
+
+class AbidesMarketMakingEnv(SubGymMarketsExecutionEnv_v0):
+    """Thin subclass that overrides action mapping for two-sided LMT quoting."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Single dummy action token — we only ever pass 0
+        self.action_space = gym.spaces.Discrete(1)
+        self._pending_bid_price: int = 0  # cents
+        self._pending_ask_price: int = 0  # cents
+
+        # ABIDES declares tight bounds on its own obs space but background agents regularly push features (holdings_pct, time_pct, etc.) outside them. Widen to float32 max to suppress the internal contains() assert.
+        n = self.observation_space.shape[0]
+        self.observation_space = gym.spaces.Box(
+            low  = -np.finfo(np.float32).max,
+            high =  np.finfo(np.float32).max,
+            shape = self.observation_space.shape,
+            dtype = np.float32,
         )
 
-    def _encode_abides_action(self, bid_price: float, ask_price: float) -> Any:
-        """
-        Encode (bid_price, ask_price) into the ABIDES-Gym action format.
-
-        ABIDES MarketMakingEnvironment typically expects a tuple/array of
-        (bid_price, ask_price, bid_size, ask_size).  Default size = 1 unit.
-
-        Example:
-            return np.array([bid_price, ask_price, 1, 1], dtype=np.float64)
-
-        TODO: implement once ABIDES action schema is confirmed.
-        """
-        raise NotImplementedError(
-            "_encode_abides_action: wire in ABIDES action schema. "
-            "See abides_gym/envs/market_making_environment.py for action layout."
-        )
-
-    def _parse_abides_step(self, abides_info: dict) -> dict:
-        """
-        Extract fill and market data from the ABIDES-Gym step info dict.
-
-        Returns a normalised dict with keys:
-            bid_qty       (int)   — shares filled on the bid side
-            ask_qty       (int)   — shares filled on the ask side
-            signed_volume (float) — net signed market volume this step
-            lob_snapshot  (dict)  — {"bid_prices": [...], "bid_sizes": [...],
-                                      "ask_prices": [...], "ask_sizes": [...]}
-
-        Example (update keys once ABIDES info schema is confirmed):
-            return {
-                "bid_qty":       abides_info.get("bid_filled",    0),
-                "ask_qty":       abides_info.get("ask_filled",    0),
-                "signed_volume": abides_info.get("net_volume",    0.0),
-                "lob_snapshot":  abides_info.get("lob_snapshot",  {}),
-            }
-
-        TODO: implement once ABIDES step info schema is confirmed.
-        """
-        raise NotImplementedError(
-            "_parse_abides_step: wire in ABIDES step info schema. "
-            "See abides_gym/envs/market_making_environment.py for info dict keys."
-        )
+    def _map_action_space_to_ABIDES_SIMULATOR_SPACE(self, action: int):
+        return [
+            {"type": "CCL_ALL"},
+            {"type": "LMT", "direction": "BUY",  "size": 1,
+             "limit_price": self._pending_bid_price},
+            {"type": "LMT", "direction": "SELL", "size": 1,
+             "limit_price": self._pending_ask_price},
+        ]
