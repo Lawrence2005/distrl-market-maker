@@ -402,7 +402,7 @@ class LOBMarketMakingEnv(gym.Env):
         psi_b = matched_bid * (mid - bid_price)
 
         # Inventory mark-to-market PnL
-        delta_m      = mid - prev_mid
+        delta_m       = mid - prev_mid
         inventory_pnl = inventory * delta_m
 
         pnl = psi_a + psi_b + inventory_pnl
