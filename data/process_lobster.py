@@ -95,17 +95,16 @@ def fit_hawkes_mle(
         mu_hat    = float(emp_rate / SCALE * 0.7)
         beta_hat  = 1.5
         alpha_hat = 0.4 * beta_hat
-        branching_ratio = alpha_hat / beta_hat
     else:
         mu_min, alpha_hat, beta_min = best.x
         mu_hat   = mu_min  / SCALE
+        alpha_hat = alpha_hat / SCALE
         beta_hat = beta_min / SCALE
-        branching_ratio = alpha_hat / beta_hat
 
         # Clip to ensure stationarity
-        if branching_ratio >= 1.0:
+        if alpha_hat / beta_hat >= 1.0:
             alpha_hat       = 0.90 * beta_hat
-            branching_ratio = alpha_hat / beta_hat
+    branching_ratio = alpha_hat / beta_hat
 
     print(f"  Hawkes MLE converged: {best is not None and best.success}")
     print(f"  mu={mu_hat:.6f}/sec, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}/sec")
