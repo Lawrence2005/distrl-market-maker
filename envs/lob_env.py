@@ -75,15 +75,15 @@ class LOBMarketMakingEnv(gym.Env):
     def __init__(
         self,
         config: str | None = None,
-        reward_type: str | None = None,
-        eta: float | None = None,
-        lam: float | None = None,
-        Q_max: int | None = None,
-        tick_size: float | None = None,
-        episode_len: int | None = None,
-        kappa: float | None = None,
-        n_lob_levels: int | None = None,
-        seed: int | None = None
+        reward_type: str = "asymmetric",
+        eta: float = 0.5,
+        lam: float = 0.1,
+        Q_max: int = 10,
+        tick_size: float = 0.01,
+        episode_len: int = 3900,
+        kappa: float = 1.0,
+        n_lob_levels: int = 3,
+        seed: int = 42,
     ):
         super().__init__()
 
@@ -94,15 +94,15 @@ class LOBMarketMakingEnv(gym.Env):
             with open(config, "r") as f:
                 cfg = yaml.safe_load(f)
 
-        self.reward_type  = reward_type  if reward_type  is not None else cfg.get("reward_type", "asymmetric")
-        self.eta          = eta          if eta          is not None else cfg.get("eta", 0.5)
-        self.lam          = lam          if lam          is not None else cfg.get("lam", 0.1)
-        self.Q_max        = Q_max        if Q_max        is not None else cfg.get("Q_max", 10)
-        self.tick_size    = tick_size    if tick_size    is not None else cfg.get("tick_size", 0.01)
-        self.episode_len  = episode_len  if episode_len  is not None else cfg.get("episode_len", 3900)
-        self.kappa        = kappa        if kappa        is not None else cfg.get("kappa", 1.0)
-        self.n_lob_levels = n_lob_levels if n_lob_levels is not None else cfg.get("n_lob_levels", 3)
-        self.seed_val     = seed         if seed         is not None else cfg.get("seed", 42)
+        self.reward_type = cfg.get("reward_type", reward_type)
+        self.eta = cfg.get("eta", eta)
+        self.lam = cfg.get("lam", lam)
+        self.Q_max = cfg.get("Q_max", Q_max)
+        self.tick_size = cfg.get("tick_size", tick_size)
+        self.episode_len = cfg.get("episode_len", episode_len)
+        self.kappa = cfg.get("kappa", kappa)
+        self.n_lob_levels = cfg.get("n_lob_levels", n_lob_levels)
+        self.seed_val = cfg.get("seed", seed)
                         
         assert self.reward_type in ("asymmetric", "quadratic", "sparse"), (f"reward_type must be 'asymmetric', 'quadratic', or 'sparse', "f"got '{self.reward_type}'")
 
