@@ -7,8 +7,6 @@ which supplies equivalent noise/momentum/informed traders wired to the
 ABIDES exchange. This file documents the intended agent design and calibration
 logic; it would be the starting point for a custom ABIDES config if rmsc04
 is replaced in a future experiment.
-
-Week 2 deliverable.
 """
 
 import numpy as np
