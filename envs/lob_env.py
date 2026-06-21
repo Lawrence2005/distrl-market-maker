@@ -584,6 +584,9 @@ class LOBMarketMakingEnv(gym.Env):
             "ask_offset":  ask_offset,
             "delta_q":     delta_q,
             "reward":      reward,
+            "signed_volume":   signed_vol,
+            "queue_imbalance": float(obs[2]),   # obs[2] is imbalance (computed)
+            "market_spread": lob_snap["ask_prices"][0] - lob_snap["bid_prices"][0] if lob_snap["ask_prices"] and lob_snap["bid_prices"] else 0.0
         }
         return obs, reward, terminated, truncated, info
 
