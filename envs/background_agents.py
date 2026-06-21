@@ -1,20 +1,12 @@
-# envs/background_agents.py
 """
 envs/background_agents.py
 
-LOBSTER-calibrated background agent population for ABIDES-Gym.
-
-Three agent types:
-    NoiseAgent    — random order placement, Hawkes-process arrivals
-    MomentumAgent — trend-following, buys/sells in direction of recent moves
-    InformedAgent — adverse selection source, has private signal about future price
-
-Parameters loaded from data/calibration/agent_params.json,
-fitted to real/synthetic LOB data by data/process_lobster.py.
-
-Reference:
-    Byrd, Hybinette & Balch (2019) — ABIDES architecture
-    Huang, Lehalle & Rosenbaum (2015) — background agent calibration motivation
+NOTE (post-Week-2 revision): This module is NOT integrated with lob_env.py.
+Background agent population is provided by rmsc04 (ABIDES built-in config),
+which supplies equivalent noise/momentum/informed traders wired to the
+ABIDES exchange. This file documents the intended agent design and calibration
+logic; it would be the starting point for a custom ABIDES config if rmsc04
+is replaced in a future experiment.
 
 Week 2 deliverable.
 """
