@@ -11,7 +11,7 @@ Four tests (specs from docs/mdp_formulation.md and Week 2 research plan):
     4. test_hawkes_more_clustered_than_poisson — Hawkes arrival CV > Poisson CV
 
 Run with:
-    python -m pytest tests/test_env.py -v
+    python -m pytest tests/test_lob_env_integration.py -v
 
 Week 2 deliverable.
 """
