@@ -328,9 +328,9 @@ class TestActionSpace:
         env.close()
 
     def test_tick_offsets_range(self):
-        assert TICK_OFFSETS[0]  == -4
-        assert TICK_OFFSETS[-1] ==  4
-        assert N_OFFSET_LEVELS  ==  9
+        assert TICK_OFFSETS[0]  == 1
+        assert TICK_OFFSETS[-1] ==  10
+        assert N_OFFSET_LEVELS  ==  10
 
     def test_all_actions_valid(self):
         env = LOBMarketMakingEnv(seed=0)
