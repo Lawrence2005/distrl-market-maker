@@ -18,8 +18,8 @@ import yaml
 from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
 
 # Action space: bid/ask offsets in ticks
-# δ ∈ {−4, −3, −2, −1, 0, +1, +2, +3, +4} → 9 levels per side → 81 total
-TICK_OFFSETS = np.arange(-4, 5)   # shape (9,)
+# δ ∈ {−10, −9, ..., 0, +1, ..., +10} → 10 levels per side → 100 total
+TICK_OFFSETS = np.arange(1, 11)   # shape (21,)
 N_OFFSET_LEVELS = len(TICK_OFFSETS)
 
 # Rolling-history window caps (avoid unbounded memory growth)
