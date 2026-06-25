@@ -18,9 +18,9 @@ import yaml
 from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
 
 # Action space: bid/ask offsets in ticks
-# δ ∈ {−10, −9, ..., 0, +1, ..., +10} → 10 levels per side → 100 total
-TICK_OFFSETS = np.arange(1, 11)   # shape (21,)
-N_OFFSET_LEVELS = len(TICK_OFFSETS)
+# δ ∈ {−10, −9, ..., 0, +1, ..., +10} → 11 levels per side → 121 total
+TICK_OFFSETS = np.arange(0, 11)   # shape (11,)
+N_OFFSET_LEVELS = len(TICK_OFFSETS) # = 11
 
 # Rolling-history window caps (avoid unbounded memory growth)
 _PRICE_HISTORY_MAXLEN  = 500
@@ -32,10 +32,9 @@ class LOBMarketMakingEnv(gym.Env):
     Limit Order Book market-making environment.
 
     Observation space: handcrafted feature vector (~17 dims, see §2 MDP doc)
-    Action space:      MultiDiscrete([9, 9]) — 9 bid-offset × 9 ask-offset
-                       combinations (equivalent to 81 joint actions).
-                       Bid index selects δ_b ∈ {−4,…,+4} ticks below mid.
-                       Ask index selects δ_a ∈ {−4,…,+4} ticks above mid.
+    Action space:   MultiDiscrete([11, 11]) — 11 bid-offset × 11 ask-offset
+                    Bid index selects δ_b ∈ {0,…,10} ticks below mid.
+                    Ask index selects δ_a ∈ {0,…,10} ticks above mid.
     Reward:            one of asymmetric / quadratic / sparse (see §4 MDP doc)
 
     Parameters
@@ -214,8 +213,8 @@ class LOBMarketMakingEnv(gym.Env):
         │  6 .. 6+K        │ LOB bid depth levels L1..LK, per-side norm     │
         │  6+K .. 6+2K     │ LOB ask depth levels L1..LK, per-side norm     │
         │  base+0          │ inventory q / Q_max ∈ [−1, +1]                 │
-        │  base+1          │ active bid distance δ_b / 4 ∈ [−1, +1]         │
-        │  base+2          │ active ask distance δ_a / 4 ∈ [−1, +1]         │
+        │  base+1          │ active bid distance δ_b / 10 ∈ [0, 1]          │
+        │  base+2          │ active ask distance δ_a / 10 ∈ [0, 1]          │
         │  base+3          │ outstanding bid offset from mid, normalised    │
         │  base+4          │ outstanding ask offset from mid, normalised    │
         │  base+5          │ time remaining τ = (T−t)/T ∈ [0, 1]            │
@@ -313,10 +312,10 @@ class LOBMarketMakingEnv(gym.Env):
         obs[base + 0] = float(np.clip(self._inventory / self.Q_max, -1.0, 1.0))
 
         # [base+1] Active bid-offset from mid (ticks), normalised by max offset
-        obs[base + 1] = float(np.clip(self._bid_dist / 4.0, -1.0, 1.0))
+        obs[base + 1] = float(np.clip(self._bid_dist / 10.0, 0.0, 1.0))
 
         # [base+2] Active ask-offset from mid (ticks), normalised by max offset
-        obs[base + 2] = float(np.clip(self._ask_dist / 4.0, -1.0, 1.0))
+        obs[base + 2] = float(np.clip(self._ask_dist / 10.0, 0.0, 1.0))
 
         # [base+3] Outstanding bid price offset from mid, normalised by Q_max·tick
         #          (Sun et al. 2022 private-state feature)
@@ -488,7 +487,7 @@ class LOBMarketMakingEnv(gym.Env):
             "step":      self._step,
             "inventory": self._inventory,
             "mid_price": self._mid_price,
-            "cash":      parsed["cash"],
+            "cash":      self._cash,
         }
         return obs, info
 
