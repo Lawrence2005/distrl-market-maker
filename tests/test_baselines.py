@@ -11,7 +11,7 @@ Testing philosophy:
                        plus ODE system properties and numerical stability
 
 Run with:
-    python -m pytest tests/test_baselines.py -v
+    pytest tests/test_baselines.py -v
 """
 
 import numpy as np
@@ -29,6 +29,21 @@ from baselines.glft import (
     spread,
 )
 from envs.lob_env import TICK_OFFSETS, N_OFFSET_LEVELS
+
+# ── Action-space-derived constants ────────────────────────────────────────────
+# All tests derive bounds from TICK_OFFSETS so they stay correct when the
+# action space changes (e.g. arange(0,11) → arange(0,21)).
+_MIN_TICK = int(TICK_OFFSETS[0])            # smallest valid offset (e.g. 0)
+_MAX_TICK = int(TICK_OFFSETS[-1])           # largest valid offset  (e.g. 10)
+_MID_TICK = int(TICK_OFFSETS[N_OFFSET_LEVELS // 2])  # middle offset value
+# A pair of distinct valid tick values for parametric tests
+_TICK_LO  = _MIN_TICK + 1                  # e.g. 1 — smallest non-zero offset
+_TICK_HI  = max(_MIN_TICK + 3, _MAX_TICK - 1)  # e.g. 9 — well within range
+
+# Valid half-spread range for FixedSpreadBaseline
+_VALID_TICKS   = list(range(_TICK_LO, min(_TICK_LO + 4, _MAX_TICK + 1)))
+# Values that must be rejected by FixedSpreadBaseline
+_INVALID_TICKS = [_MIN_TICK - 1, _MAX_TICK + 1, -1, _MAX_TICK + 5]
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -57,12 +72,12 @@ class TestFixedSpread:
         b = FixedSpreadBaseline(half_spread_ticks=3)
         assert b.half_spread_ticks == 3
 
-    @pytest.mark.parametrize("ticks", [0, 5, -1, 10])
+    @pytest.mark.parametrize("ticks", _INVALID_TICKS)
     def test_invalid_half_spread_raises(self, ticks):
         with pytest.raises(AssertionError):
             FixedSpreadBaseline(half_spread_ticks=ticks)
 
-    @pytest.mark.parametrize("ticks", [1, 2, 3, 4])
+    @pytest.mark.parametrize("ticks", _VALID_TICKS)
     def test_valid_half_spreads(self, ticks):
         b = FixedSpreadBaseline(half_spread_ticks=ticks)
         assert b.half_spread_ticks == ticks
@@ -85,7 +100,7 @@ class TestFixedSpread:
         assert np.issubdtype(action.dtype, np.integer)
 
     def test_act_indices_in_range(self):
-        for ticks in range(1, 5):
+        for ticks in _VALID_TICKS:
             b = FixedSpreadBaseline(half_spread_ticks=ticks)
             action = b.act(DUMMY_OBS, DUMMY_INFO)
             assert 0 <= action[0] < N_OFFSET_LEVELS
@@ -93,7 +108,7 @@ class TestFixedSpread:
 
     def test_action_is_constant(self):
         """Fixed spread must return the same action regardless of obs/info."""
-        b = FixedSpreadBaseline(half_spread_ticks=2)
+        b = FixedSpreadBaseline(half_spread_ticks=_TICK_LO)
         a1 = b.act(DUMMY_OBS, _info(mid=100.0,  inventory=+5))
         a2 = b.act(DUMMY_OBS, _info(mid=2000.0, inventory=-5))
         a3 = b.act(np.ones(17, dtype=np.float32), DUMMY_INFO)
@@ -102,14 +117,14 @@ class TestFixedSpread:
 
     def test_symmetric_quotes(self):
         """bid_idx == ask_idx — always symmetric."""
-        b = FixedSpreadBaseline(half_spread_ticks=3)
+        b = FixedSpreadBaseline(half_spread_ticks=_TICK_LO + 1)
         action = b.act(DUMMY_OBS, DUMMY_INFO)
         assert action[0] == action[1]
 
     def test_wider_ticks_gives_larger_index(self):
         """Larger half_spread_ticks → deeper offset → larger index."""
-        b1 = FixedSpreadBaseline(half_spread_ticks=1)
-        b2 = FixedSpreadBaseline(half_spread_ticks=3)
+        b1 = FixedSpreadBaseline(half_spread_ticks=_TICK_LO)
+        b2 = FixedSpreadBaseline(half_spread_ticks=_TICK_HI)
         a1 = b1.act(DUMMY_OBS, DUMMY_INFO)
         a2 = b2.act(DUMMY_OBS, DUMMY_INFO)
         assert a2[0] > a1[0]
@@ -121,7 +136,7 @@ class TestFixedSpread:
         b.reset()   # stateless — should be a no-op
 
     def test_action_unchanged_after_reset(self):
-        b = FixedSpreadBaseline(half_spread_ticks=2)
+        b = FixedSpreadBaseline(half_spread_ticks=_TICK_LO)
         a_before = b.act(DUMMY_OBS, DUMMY_INFO).copy()
         b.reset()
         a_after  = b.act(DUMMY_OBS, DUMMY_INFO)
@@ -129,13 +144,26 @@ class TestFixedSpread:
 
     # ── Helper ────────────────────────────────────────────────────────────────
 
-    def test_offset_to_idx_centre(self):
-        assert TICK_OFFSETS[_offset_to_idx(1)] == 1
-        assert TICK_OFFSETS[_offset_to_idx(10)] == 10
+    def test_offset_to_idx_min_offset(self):
+        """Smallest valid offset maps to index 0."""
+        assert _offset_to_idx(_MIN_TICK) == 0
 
-    def test_offset_to_idx_clamping(self):
-        assert _offset_to_idx(-10) == 0
-        assert _offset_to_idx(+10) == N_OFFSET_LEVELS - 1
+    def test_offset_to_idx_max_offset(self):
+        """Largest valid offset maps to last index."""
+        assert _offset_to_idx(_MAX_TICK) == N_OFFSET_LEVELS - 1
+
+    def test_offset_to_idx_clamping_below(self):
+        """Values below _MIN_TICK clamp to 0."""
+        assert _offset_to_idx(_MIN_TICK - 100) == 0
+
+    def test_offset_to_idx_clamping_above(self):
+        """Values above _MAX_TICK clamp to last index."""
+        assert _offset_to_idx(_MAX_TICK + 100) == N_OFFSET_LEVELS - 1
+
+    def test_offset_to_idx_monotone(self):
+        """Index increases (or stays equal) as offset increases."""
+        indices = [_offset_to_idx(t) for t in TICK_OFFSETS]
+        assert all(indices[i] <= indices[i+1] for i in range(len(indices)-1))
 
     # ── repr ──────────────────────────────────────────────────────────────────
 
@@ -162,17 +190,17 @@ class TestAvellanedaStoikov:
 
     def test_reservation_price_at_zero_inventory(self, as_baseline):
         """r(s, 0, t) = s exactly — no skew when flat."""
-        r = as_baseline.reservation_price(mid=1000.0, inventory=0.0, tau=100.0)
+        r = as_baseline.reservation_price(mid=1000.0, inventory=0.0, tau_hat=100.0)
         assert r == pytest.approx(1000.0)
 
     def test_reservation_price_long_inventory_below_mid(self, as_baseline):
         """Long inventory (q>0) → r < s (quotes skew toward selling)."""
-        r = as_baseline.reservation_price(mid=1000.0, inventory=5.0, tau=100.0)
+        r = as_baseline.reservation_price(mid=1000.0, inventory=5.0, tau_hat=100.0)
         assert r < 1000.0
 
     def test_reservation_price_short_inventory_above_mid(self, as_baseline):
         """Short inventory (q<0) → r > s (quotes skew toward buying)."""
-        r = as_baseline.reservation_price(mid=1000.0, inventory=-5.0, tau=100.0)
+        r = as_baseline.reservation_price(mid=1000.0, inventory=-5.0, tau_hat=100.0)
         assert r > 1000.0
 
     def test_reservation_price_linear_in_inventory(self, as_baseline):
@@ -184,14 +212,14 @@ class TestAvellanedaStoikov:
 
     def test_reservation_price_zero_at_terminal(self, as_baseline):
         """At tau=0 (terminal), skew vanishes: r = s regardless of q."""
-        r = as_baseline.reservation_price(mid=1000.0, inventory=10.0, tau=0.0)
+        r = as_baseline.reservation_price(mid=1000.0, inventory=10.0, tau_hat=0.0)
         assert r == pytest.approx(1000.0)
 
     def test_reservation_price_analytical_value(self, as_baseline):
         """r = s - q·γ·σ²·τ."""
         mid, q, tau = 1000.0, 3.0, 100.0
         expected = mid - q * 0.1 * (0.01 ** 2) * tau
-        r = as_baseline.reservation_price(mid, q, tau)
+        r = as_baseline.reservation_price(mid, q, tau_hat=tau)
         assert r == pytest.approx(expected, rel=1e-8)
 
     # ── optimal_spread ────────────────────────────────────────────────────────
@@ -200,13 +228,13 @@ class TestAvellanedaStoikov:
         """At tau=0: δ* = (2/γ)·ln(1 + γ/κ) — inventory risk term vanishes."""
         gamma, kappa = 0.1, 1.5
         base = (2.0 / gamma) * np.log(1.0 + gamma / kappa)
-        s = as_baseline.optimal_spread(tau=0.0)
+        s = as_baseline.optimal_spread(tau_hat=0.0)
         assert s == pytest.approx(base, rel=1e-8)
 
     def test_spread_increases_with_tau(self, as_baseline):
         """Wider spread earlier in episode (more inventory risk remaining)."""
-        s1 = as_baseline.optimal_spread(tau=1.0)
-        s2 = as_baseline.optimal_spread(tau=100.0)
+        s1 = as_baseline.optimal_spread(tau_hat=1.0)
+        s2 = as_baseline.optimal_spread(tau_hat=100.0)
         assert s2 > s1
 
     def test_spread_increases_with_sigma(self):
@@ -215,8 +243,8 @@ class TestAvellanedaStoikov:
                                         T=390, adapt_sigma=False)
         b2 = AvellanedaStoikovBaseline(gamma=0.1, kappa=1.5, sigma=0.02,
                                         T=390, adapt_sigma=False)
-        s1 = b1.optimal_spread(tau=100.0)
-        s2 = b2.optimal_spread(tau=100.0)
+        s1 = b1.optimal_spread(tau_hat=100.0)
+        s2 = b2.optimal_spread(tau_hat=100.0)
         assert s2 > s1
 
     def test_spread_increases_with_kappa_decreasing(self):
@@ -225,20 +253,20 @@ class TestAvellanedaStoikov:
                                         T=390, adapt_sigma=False)
         b2 = AvellanedaStoikovBaseline(gamma=0.1, kappa=1.0, sigma=0.01,
                                         T=390, adapt_sigma=False)
-        s1 = b1.optimal_spread(tau=100.0)
-        s2 = b2.optimal_spread(tau=100.0)
+        s1 = b1.optimal_spread(tau_hat=100.0)
+        s2 = b2.optimal_spread(tau_hat=100.0)
         assert s2 > s1
 
     def test_spread_positive(self, as_baseline):
         """Spread must always be positive."""
         for tau in [0.0, 1.0, 50.0, 390.0]:
-            assert as_baseline.optimal_spread(tau) > 0.0
+            assert as_baseline.optimal_spread(tau_hat=tau) > 0.0
 
     def test_spread_analytical_value(self, as_baseline):
         """δ* = γ·σ²·τ + (2/γ)·ln(1 + γ/κ)."""
         gamma, kappa, sigma, tau = 0.1, 1.5, 0.01, 100.0
         expected = gamma * sigma**2 * tau + (2/gamma) * np.log(1 + gamma/kappa)
-        assert as_baseline.optimal_spread(tau) == pytest.approx(expected, rel=1e-8)
+        assert as_baseline.optimal_spread(tau_hat=tau) == pytest.approx(expected, rel=1e-8)
 
     # ── compute_quotes ────────────────────────────────────────────────────────
 
@@ -700,19 +728,19 @@ class TestGLFTBaseline:
         assert action[0] == action[1]
 
     def test_act_long_inventory_ask_closer(self, glft):
-        """q>0: ask_idx < bid_idx (ask tighter)."""
+        """q>0: ask distance from mid < bid distance from mid."""
         glft.reset()
-        bid, ask = glft.compute_quotes(mid=1000.0, inventory=+5, tau=10.0)
+        bid, ask = glft.compute_quotes(mid=1000.0, inventory=+5, tau_hat=10.0)
         assert (ask - 1000.0) < (1000.0 - bid), \
             f"Long: ask_dist={ask-1000:.4f} should be < bid_dist={1000-bid:.4f}"
 
     def test_act_short_inventory_bid_closer(self, glft):
-        """q<0: bid_idx < ask_idx (bid tighter)."""
+        """q<0: bid distance from mid < ask distance from mid."""
         glft.reset()
-        bid, ask = glft.compute_quotes(mid=1000.0, inventory=-5, tau=10.0)
+        bid, ask = glft.compute_quotes(mid=1000.0, inventory=-5, tau_hat=10.0)
         assert (1000.0 - bid) < (ask - 1000.0), \
             f"Short: bid_dist={1000-bid:.4f} should be < ask_dist={ask-1000:.4f}"
-        
+
     def test_act_increments_step(self, glft):
         glft.reset()
         assert glft._t == 0
@@ -750,13 +778,13 @@ class TestGLFTBaseline:
     def test_compute_quotes_at_max_inventory_no_bid(self, glft):
         """At q=Q_max: bid falls back to max offset (no more buying)."""
         bid, ask = glft.compute_quotes(1000.0, glft.Q_max, 100.0)
-        # bid should be at max offset (4 ticks below mid)
-        assert bid == pytest.approx(1000.0 - 4 * glft.tick_size)
+        # bid should be at max action-space offset below mid
+        assert bid == pytest.approx(1000.0 - _MAX_TICK * glft.tick_size)
 
     def test_compute_quotes_at_min_inventory_no_ask(self, glft):
         """At q=-Q_max: ask falls back to max offset (no more selling)."""
         bid, ask = glft.compute_quotes(1000.0, -glft.Q_max, 100.0)
-        assert ask == pytest.approx(1000.0 + 4 * glft.tick_size)
+        assert ask == pytest.approx(1000.0 + _MAX_TICK * glft.tick_size)
 
     # ── repr ──────────────────────────────────────────────────────────────────
 
