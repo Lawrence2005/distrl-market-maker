@@ -19,7 +19,7 @@ from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecut
 
 # Action space: bid/ask offsets in ticks
 # δ ∈ {−10, −9, ..., 0, +1, ..., +10} → 11 levels per side → 121 total
-TICK_OFFSETS = np.arange(0, 11)   # shape (11,)
+TICK_OFFSETS = np.arange(0, 81)   # shape (11,)
 N_OFFSET_LEVELS = len(TICK_OFFSETS) # = 11
 
 # Rolling-history window caps (avoid unbounded memory growth)
@@ -32,7 +32,7 @@ class LOBMarketMakingEnv(gym.Env):
     Limit Order Book market-making environment.
 
     Observation space: handcrafted feature vector (~17 dims, see §2 MDP doc)
-    Action space:   MultiDiscrete([11, 11]) — 11 bid-offset × 11 ask-offset
+    Action space:   MultiDiscrete([N_OFFSET_LEVELS, N_OFFSET_LEVELS]) — N_OFFSET_LEVELS bid-offset × N_OFFSET_LEVELS ask-offset
                     Bid index selects δ_b ∈ {0,…,10} ticks below mid.
                     Ask index selects δ_a ∈ {0,…,10} ticks above mid.
     Reward:            one of asymmetric / quadratic / sparse (see §4 MDP doc)
