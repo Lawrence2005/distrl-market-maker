@@ -1,0 +1,8 @@
+# LSTM recurrent integration layer (DRQN-style)
+# Sits on top of the encoder output and integrates latent vectors over time to produce agent hidden state.
+type: lstm
+hidden_dim: 128         # ablate: 64, 128, 256
+window_size: 30         # steps of history fed to LSTM
+num_layers: 1           # single-layer LSTM
+dropout: 0.0            # enable (0.1–0.2) only if overfitting observed
+input_dim: null         # set at runtime = encoder latent_dim

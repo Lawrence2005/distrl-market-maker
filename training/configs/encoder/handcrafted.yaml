@@ -1,21 +1,19 @@
 type: handcrafted
+obs_dim: 18             # = 6 + 2*n_lob_levels + 6, with n_lob_levels=3
 features:
-  # Market (Spooner et al. 2018; Huang et al. 2015)
+  # Market (6 + 2K features, K=n_lob_levels)
   - bid_ask_spread
-  - midprice_move
+  - midprice_log_return
   - queue_imbalance
   - signed_volume
   - realized_vol
   - rsi
-  - lob_depth_bid_k_levels   # K=3 default
+  - lob_depth_bid_k_levels
   - lob_depth_ask_k_levels
-  # Private
-  - inventory                # Spooner et al. 2018
-  - active_bid_distance      # Spooner et al. 2018
-  - active_ask_distance      # Spooner et al. 2018
-  - outstanding_bid_price    # Sun et al. 2022
-  - outstanding_ask_price    # Sun et al. 2022
-  - trade_prices_last_T      # Patel 2018
-  - cash                     # Patel 2018
-  - time_remaining           # Gašperov survey 2021
-  # Note: VPIN removed — not in reading notes
+  # Private (6 features)
+  - inventory
+  - active_bid_distance
+  - active_ask_distance
+  - outstanding_bid_offset
+  - outstanding_ask_offset
+  - time_remaining
