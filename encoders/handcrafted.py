@@ -1,24 +1,92 @@
 """
-Handcrafted feature encoder.
+encoders/handcrafted.py
 
-Market features (Spooner et al. 2018; Huang et al. 2015):
-  - Bid-ask spread
-  - Mid-price move (last N steps)
-  - Book/queue imbalance  I=(V_b-V_a)/(V_b+V_a)
-  - Signed volume
-  - Realised volatility
-  - RSI
-  - LOB depth at K levels per side  (K=3 default; standard LOB practice)
+Handcrafted feature encoder — identity wrapper.
 
-Private features:
-  - Inventory q                     (Spooner et al. 2018)
-  - Active quoting distances δ_b,δ_a (Spooner et al. 2018)
-  - Outstanding bid/ask price       (Sun et al. 2022)
-  - Trade prices (last T steps)     (Patel 2018)
-  - Available cash                  (Patel 2018)
-  - Time remaining τ=(T-t)/T        (Gašperov survey 2021)
+The handcrafted observation vector produced by LOBMarketMakingEnv._get_obs()
+is already a normalised, ready-to-use feature vector. This encoder does
+no learned compression — it passes the obs through as-is, so that the
+downstream LSTM receives the same latent_z interface as the AE and CNN
+variants.
 
-Note: VPIN toxicity removed — not in any of the 19 papers' reading notes.
-Week 4 deliverable.
+Observation vector layout (LOBMarketMakingEnv, n_lob_levels=3):
+    idx  0      bid-ask spread (normalised)
+    idx  1      mid log-return (normalised)
+    idx  2      queue imbalance ∈ [−1, 1]
+    idx  3      signed volume (normalised)
+    idx  4      realised volatility (normalised)
+    idx  5      RSI (normalised to [−1, +1])
+    idx  6–8    LOB bid depth L1–L3 (per-side proportions)
+    idx  9–11   LOB ask depth L1–L3 (per-side proportions)
+    idx 12      inventory q / Q_max ∈ [−1, +1]
+    idx 13      active bid distance / max_offset ∈ [0, 1]
+    idx 14      active ask distance / max_offset ∈ [0, 1]
+    idx 15      outstanding bid offset from mid (normalised)
+    idx 16      outstanding ask offset from mid (normalised)
+    idx 17      time remaining τ = (T−t)/T ∈ [0, 1]
+    ──────────────────────────────────────────────────────
+    Total: 18 dims  (= 6 + 2·n_lob_levels + 6, with n_lob_levels=3)
+
+latent_dim property returns obs_dim (18) so that recurrent_base.py can
+set lstm.input_size dynamically without special-casing this encoder.
+
+Reference
+---------
+Feature set follows Spooner et al. (2018), Huang et al. (2015),
+Sun et al. (2022), and Patel (2018) — see configs/encoder/handcrafted.yaml.
+
+Week 5 deliverable.
 """
-# TODO: implement
+
+import torch
+import torch.nn as nn
+
+
+class HandcraftedEncoder(nn.Module):
+    """
+    Identity encoder for the handcrafted LOB feature vector.
+
+    No learned parameters. Passes the normalised observation vector
+    directly to the LSTM as latent_z.
+
+    Parameters
+    ----------
+    obs_dim : int — dimension of the input observation vector (default 18)
+
+    Usage
+    -----
+        enc = HandcraftedEncoder(obs_dim=18)
+        z   = enc(obs)   # z.shape == obs.shape == (B, 18)
+    """
+
+    def __init__(self, obs_dim: int = 18):
+        super().__init__()
+        self.obs_dim = obs_dim
+
+    @property
+    def latent_dim(self) -> int:
+        """
+        Output dimension fed to the LSTM.
+
+        For the handcrafted encoder this equals obs_dim — no compression.
+        RecurrentBase reads this property to set lstm.input_size.
+        """
+        return self.obs_dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Pass observation through unchanged.
+
+        Parameters
+        ----------
+        x : Tensor shape (B, obs_dim) or (B, T, obs_dim)
+            Normalised observation from LOBMarketMakingEnv._get_obs().
+
+        Returns
+        -------
+        Tensor — same shape as input, dtype float32
+        """
+        return x.float()
+
+    def __repr__(self) -> str:
+        return f"HandcraftedEncoder(obs_dim={self.obs_dim}, latent_dim={self.latent_dim})"
