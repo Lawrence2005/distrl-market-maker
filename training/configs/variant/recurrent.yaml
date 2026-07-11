@@ -1,0 +1,14 @@
+# configs/variant/recurrent.yaml
+# Recurrent variant — adds LSTM integration layer on top of encoder.
+# Activates DRQN-style temporal integration (Hausknecht & Stone 2015).
+#
+# When variant=recurrent, train.py wraps the encoder output with
+# an LSTM before passing to the agent head.
+# When variant=null (default), encoder output goes directly to agent head.
+
+type: recurrent
+hidden_dim: 128     # LSTM hidden state size — ablate: 64, 128, 256
+num_layers: 1       # single-layer LSTM to start
+window_size: 30     # sequence length fed to LSTM
+dropout: 0.0        # enable 0.1-0.2 only if overfitting observed
+input_dim: null     # set at runtime from encoder.latent_dim

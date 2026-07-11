@@ -1,4 +1,7 @@
-# Sun et al. (2022) sparse liquidity reward
-type: sparse
-fill_reward: 1.0
-inventory_penalty: -0.5
+# configs/reward/sparse.yaml
+# Sparse diagnostic reward:
+#   r = +1.0 if both sides filled (round-trip)
+#   r = -0.5 if cross-spread fill (adverse selection)
+#   r =  0.0 otherwise
+
+reward_type: sparse

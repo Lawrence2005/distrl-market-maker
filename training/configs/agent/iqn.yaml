@@ -1,4 +1,5 @@
 # IQN agent config
+type: iqn
 n_quantile_samples: 64
 embedding_dim: 64
 hidden_dim: 256

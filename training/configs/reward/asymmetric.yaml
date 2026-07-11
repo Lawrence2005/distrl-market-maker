@@ -1,3 +1,7 @@
-# Spooner (2018) asymmetrically dampened reward
-type: asymmetric
-eta: 0.5              # sweep: 0.3, 0.5, 0.7
+# configs/reward/asymmetric.yaml
+# Avellaneda-Stoikov flavour reward:
+#   r = PnL - eta * max(0, inventory_pnl)
+# Penalises adverse inventory PnL only.
+
+reward_type: asymmetric
+eta: 0.5      # inventory dampening — ablate: 0.1, 0.5, 1.0

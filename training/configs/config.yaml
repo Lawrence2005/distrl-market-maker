@@ -1,0 +1,49 @@
+# configs/config.yaml
+# Top-level Hydra configuration for distrl-market-maker training runs.
+#
+# Usage:
+#   python training/train.py                              # defaults
+#   python training/train.py agent=qrdqn encoder=cnn     # override groups
+#   python training/train.py agent=dqn,qrdqn,iqn --multirun
+#
+# Hydra config groups:
+#   agent/    : dqn | qrdqn | iqn
+#   encoder/  : handcrafted | cnn | autoencoder
+#   reward/   : asymmetric | quadratic | sparse
+#   env/      : base (+ optional regime overlay)
+#   variant/  : recurrent (optional LSTM layer on top of encoder)
+
+defaults:
+  - env: base
+  - agent: qrdqn
+  - encoder: handcrafted
+  - reward: asymmetric
+  - _self_
+
+# ── Top-level overrides ───────────────────────────────────────────────
+seed: 42
+
+# CVaR tail fraction — overrides agent.cvar_alpha when set
+# Passed as alpha=0.10 on CLI
+alpha: 0.25
+
+# Whether to add LSTM recurrent layer on top of encoder
+# Set via variant=recurrent on CLI
+variant: null   # null = no recurrent layer (snapshot agent)
+
+# ── Training schedule ─────────────────────────────────────────────────
+training:
+  n_episodes:          2000    # total training episodes
+  eval_every:          50      # evaluate every N episodes
+  eval_episodes:       10      # episodes per evaluation run
+  checkpoint_every:    100     # save checkpoint every N episodes
+  checkpoint_dir:      checkpoints/
+  log_dir:             logs/
+  warmup_steps:        1000    # steps before first gradient update
+  max_grad_norm:       10.0    # gradient clipping
+
+# ── Logging ───────────────────────────────────────────────────────────
+logging:
+  console_every:       10      # print to console every N episodes
+  wandb:               false   # set true to enable W&B logging
+  wandb_project:       distrl-market-maker

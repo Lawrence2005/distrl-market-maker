@@ -1,0 +1,7 @@
+# configs/reward/quadratic.yaml
+# Cartea-Jaimungal flavour reward:
+#   r = PnL - lam * q^2
+# Symmetric quadratic penalty on inventory level.
+
+reward_type: quadratic
+lam: 0.1      # inventory penalty coefficient — ablate: 0.01, 0.1, 1.0
