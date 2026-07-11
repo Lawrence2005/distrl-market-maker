@@ -1,0 +1,8 @@
+# configs/env/regime/normal.yaml
+# Normal regime — default ABIDES rmsc04 parameters.
+
+# @package env
+sigma_override: 0.01
+episode_len: 390
+Q_max: 10
+kappa: 1.0

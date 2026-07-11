@@ -1,0 +1,9 @@
+# configs/env/regime/high_vol.yaml
+# High-volatility regime overlay — merged on top of env/base.yaml.
+# Increases sigma for Hawkes process and tightens inventory constraint.
+
+# @package env
+sigma_override: 0.02     # higher realised vol (passed to baselines for comparison)
+episode_len: 390         # keep standard episode length
+Q_max: 5                 # tighter inventory constraint under high vol
+kappa: 1.5               # looser fill rate (wider spreads in high vol)

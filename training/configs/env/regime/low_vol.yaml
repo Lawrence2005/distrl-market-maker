@@ -1,0 +1,8 @@
+# configs/env/regime/low_vol.yaml
+# Low-volatility regime overlay.
+
+# @package env
+sigma_override: 0.003
+episode_len: 390
+Q_max: 10
+kappa: 0.8
