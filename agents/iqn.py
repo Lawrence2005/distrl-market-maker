@@ -291,6 +291,8 @@ class IQNAgent:
         self.epsilon_decay_steps = epsilon_decay_steps
         self.device              = torch.device(device)
 
+        self.is_online = False
+
         # Number of tail samples for CVaR
         self._n_tail = max(1, int(cvar_alpha * n_quantile_samples))
 

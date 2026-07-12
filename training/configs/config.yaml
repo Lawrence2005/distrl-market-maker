@@ -7,7 +7,8 @@
 #   python training/train.py agent=dqn,qrdqn,iqn --multirun
 #
 # Hydra config groups:
-#   agent/    : dqn | qrdqn | iqn
+#   agent/    : dqn | qrdqn | iqn | ppo | sarsa
+#   policy/   : cvar | mean | var
 #   encoder/  : handcrafted | cnn | autoencoder
 #   reward/   : asymmetric | quadratic | sparse
 #   env/      : base (+ optional regime overlay)
@@ -18,6 +19,7 @@ defaults:
   - agent: qrdqn
   - encoder: handcrafted
   - reward: asymmetric
+  - policy: cvar
   - _self_
 
 # ── Top-level overrides ───────────────────────────────────────────────

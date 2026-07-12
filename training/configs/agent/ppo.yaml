@@ -1,0 +1,14 @@
+# configs/agent/ppo.yaml
+type: ppo
+
+hidden_dim:     128
+gamma:          0.99
+gae_lambda:     0.95
+beta_init:      0.5
+delta_target:   0.01
+k_epochs:       4
+minibatch_size: 64
+entropy_coef:   0.01
+value_coef:     0.5
+lr:             0.0003
+max_grad_norm:  0.5

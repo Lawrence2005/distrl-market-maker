@@ -1,0 +1,3 @@
+# configs/policy/mean.yaml
+measure: mean
+alpha:   null   # unused for mean

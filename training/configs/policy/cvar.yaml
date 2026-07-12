@@ -1,0 +1,3 @@
+# configs/policy/cvar.yaml
+measure: cvar
+alpha:   0.25   # overridden by top-level alpha= on CLI

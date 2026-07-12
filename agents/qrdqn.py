@@ -223,6 +223,8 @@ class QRDQNAgent:
         self.epsilon_decay_steps = epsilon_decay_steps
         self.device              = torch.device(device)
 
+        self.is_online = False
+
         # Fixed quantile levels τ_i = (2i-1)/(2N), i=1,...,N
         self.taus = torch.FloatTensor(
             [(2 * i - 1) / (2 * n_quantiles) for i in range(1, n_quantiles + 1)]

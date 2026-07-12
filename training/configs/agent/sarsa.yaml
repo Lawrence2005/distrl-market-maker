@@ -1,0 +1,17 @@
+# configs/agent/sarsa.yaml
+type: sarsa
+
+obs_dim: 18
+
+n_tilings:     32
+n_tiles:       8
+memory_size:   131072    # 2^17
+
+alpha:         0.001
+gamma:         0.97
+lambda_trace:  0.96
+lambda_i:      [0.6, 0.1, 0.3]
+
+epsilon:       0.7
+epsilon_floor: 0.0001
+epsilon_T:     1000

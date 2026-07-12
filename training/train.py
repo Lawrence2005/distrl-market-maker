@@ -67,6 +67,9 @@ from encoders.autoencoder import AEEncoder
 from agents.dqn import DQNAgent
 from agents.qrdqn import QRDQNAgent
 from agents.iqn import IQNAgent
+from agents.ppo import PPOAgent
+from agents.sarsa import SARSAAgent
+from agents.cvar_policy import CVaRPolicy
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -108,6 +111,8 @@ def build_agent(
     n_actions: int,
     alpha:     float,
     device:    str,
+    enc_type:    str,
+    seed:        int = 42,
 ) -> DQNAgent | QRDQNAgent | IQNAgent:
     """
     Instantiate agent from config group agent/.
@@ -162,11 +167,70 @@ def build_agent(
             dueling            = agent_cfg.get("dueling", True),
             cvar_alpha         = alpha,
         )
+    
+    if agent_type == "ppo":
+        return PPOAgent(
+            encoder        = encoder,
+            n_actions      = n_actions,
+            hidden_dim     = agent_cfg.get("hidden_dim",     128),
+            gamma          = agent_cfg.get("gamma",          0.99),
+            gae_lambda     = agent_cfg.get("gae_lambda",     0.95),
+            beta_init      = agent_cfg.get("beta_init",      0.5),
+            delta_target   = agent_cfg.get("delta_target",   0.01),
+            k_epochs       = agent_cfg.get("k_epochs",       4),
+            minibatch_size = agent_cfg.get("minibatch_size", 64),
+            entropy_coef   = agent_cfg.get("entropy_coef",   0.01),
+            value_coef     = agent_cfg.get("value_coef",     0.5),
+            lr             = agent_cfg.get("lr",             3e-4),
+            max_grad_norm  = agent_cfg.get("max_grad_norm",  0.5),
+            device         = device,
+        )
+
+    if agent_type == "sarsa":
+        assert enc_type == "handcrafted", (
+            "SARSAAgent only supports handcrafted encoder. "
+            "Run with encoder=handcrafted."
+        )
+        return SARSAAgent(
+            obs_dim       = int(agent_cfg.get("obs_dim", 18)),
+            n_actions     = n_actions,
+            n_tilings     = agent_cfg.get("n_tilings",     32),
+            n_tiles       = agent_cfg.get("n_tiles",        8),
+            memory_size   = agent_cfg.get("memory_size",   2**17),
+            alpha         = agent_cfg.get("alpha",         0.001),
+            gamma         = agent_cfg.get("gamma",         0.97),
+            lambda_trace  = agent_cfg.get("lambda_trace",  0.96),
+            lambda_i      = tuple(agent_cfg.get("lambda_i", [0.6, 0.1, 0.3])),
+            epsilon       = agent_cfg.get("epsilon",        0.7),
+            epsilon_floor = agent_cfg.get("epsilon_floor", 0.0001),
+            epsilon_T     = agent_cfg.get("epsilon_T",     1000),
+            seed          = seed,
+        )
 
     raise ValueError(
         f"Unknown agent type '{agent_type}'. "
-        f"Choose from: dqn, qrdqn, iqn."
+        f"Choose from: dqn, qrdqn, iqn, sarsa."
     )
+
+def wrap_policy(
+    agent:      Any,
+    policy_cfg: DictConfig,
+    alpha:      float,
+) -> Any:
+    """
+    Optionally wrap agent with CVaRPolicy.
+    Only applies to distributional agents (QR-DQN, IQN).
+    For DQN, SARSA, PPO: returns agent unchanged.
+    """
+    measure = policy_cfg.get("measure", "cvar")
+
+    if not isinstance(agent, (QRDQNAgent, IQNAgent)):
+        return agent   # non-distributional agents: no wrapper
+
+    if measure == "mean":
+        return agent   # mean is the default for distributional — no wrapper needed
+
+    return CVaRPolicy(agent=agent, alpha=alpha, measure=measure)
 
 
 def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMarketMakingEnv:
@@ -286,7 +350,7 @@ def compute_episode_metrics(
 
 def run_episode(
     env:      LOBMarketMakingEnv,
-    agent:    DQNAgent | QRDQNAgent | IQNAgent,
+    agent:    Any,
     enc_type: str,
     training: bool = True,
     seed:     Optional[int] = None,
@@ -309,6 +373,8 @@ def run_episode(
     obs, info = env.reset(seed=seed)
     agent.reset_hidden(batch_size=1)
 
+    is_ppo = isinstance(agent, PPOAgent)
+
     step_pnls   = []
     inventories = []
     cum_pnls    = []
@@ -322,7 +388,10 @@ def run_episode(
 
     while not (terminated or truncated):
         enc_input = get_encoder_input(obs, info, enc_type)
-        action    = agent.act(enc_input, greedy=not training)
+        if is_ppo:
+            action, value, log_prob = agent.act_with_value(enc_input)
+        else:
+            action = agent.act(enc_input, greedy=not training)
 
         next_obs, reward, terminated, truncated, next_info = env.step(action)
         next_enc = get_encoder_input(next_obs, next_info, enc_type)
@@ -338,16 +407,36 @@ def run_episode(
         cum_pnls.append(cum_pnl)
 
         if training:
-            agent.observe(enc_input, action, reward, next_enc,
-                          terminated or truncated)
-            loss = agent.train_step()
-            if loss is not None:
-                losses.append(loss)
+            if getattr(agent, 'is_online', False):
+                # SARSA: pass transition directly
+                loss = agent.train_step(
+                    obs=enc_input, action=action, reward=reward,
+                    next_obs=next_enc, done=terminated or truncated,
+                )
+                if loss is not None:
+                    losses.append(loss)
+            elif is_ppo:
+                # PPO: store with value and log_prob, no per-step update
+                agent.observe(enc_input, action, reward, next_enc,
+                            terminated or truncated,
+                            value=value, log_prob=log_prob)
+            else:
+                # DQN/QR-DQN/IQN: buffer + per-step update
+                agent.observe(enc_input, action, reward, next_enc,
+                            terminated or truncated)
+                loss = agent.train_step()
+                if loss is not None:
+                    losses.append(loss)
 
         obs      = next_obs
         info     = next_info
         prev_mid = mid
         prev_inv = inv
+    
+    if training and is_ppo:
+        loss = agent.train_step()   # PPO updates once per episode
+        if loss is not None:
+            losses.append(loss)
 
     metrics = compute_episode_metrics(step_pnls, inventories, cum_pnls)
     metrics["mean_loss"] = float(np.mean(losses)) if losses else 0.0
@@ -395,7 +484,9 @@ def load_checkpoint(
 # Main training loop
 # ══════════════════════════════════════════════════════════════════════════════
 
-@hydra.main(config_path="../configs", config_name="config", version_base="1.3")
+_CONFIG_PATH = str(Path(__file__).parent / "configs")
+
+@hydra.main(config_path=_CONFIG_PATH, config_name="config", version_base="1.3")
 def train(cfg: DictConfig) -> None:
     """
     Main Hydra entry point.
@@ -421,7 +512,16 @@ def train(cfg: DictConfig) -> None:
     # Override CVaR alpha from top-level config
     alpha = float(cfg.get("alpha", cfg.agent.get("cvar_alpha", 0.25)))
 
-    agent = build_agent(cfg.agent, encoder, n_actions, alpha, device)
+    agent = build_agent(
+        cfg.agent,
+        encoder,
+        n_actions,
+        alpha,
+        device,
+        enc_type = cfg.encoder.type,
+        seed     = int(cfg.seed),
+    )
+    agent  = wrap_policy(agent, cfg.policy, alpha)
     env   = build_env(cfg.env, cfg.reward, seed)
 
     enc_type = cfg.encoder.type

@@ -102,6 +102,8 @@ class DQNAgent:
         self.epsilon_decay_steps = epsilon_decay_steps
         self.device             = torch.device(device)
 
+        self.is_online = False
+
         # ── Networks ──────────────────────────────────────────────────
         self.online = RecurrentBase(
             encoder    = encoder,
