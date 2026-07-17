@@ -19,7 +19,8 @@ defaults:
   - agent: qrdqn
   - encoder: handcrafted
   - reward: asymmetric
-  - policy: cvar
+  - optional variant: null
+  - optional policy: null
   - _self_
 
 # ── Top-level overrides ───────────────────────────────────────────────
@@ -39,8 +40,8 @@ training:
   eval_every:          50      # evaluate every N episodes
   eval_episodes:       10      # episodes per evaluation run
   checkpoint_every:    100     # save checkpoint every N episodes
-  checkpoint_dir:      checkpoints/
-  log_dir:             logs/
+  checkpoint_dir: checkpoints
+  log_dir:        logs
   warmup_steps:        1000    # steps before first gradient update
   max_grad_norm:       10.0    # gradient clipping
 
@@ -49,3 +50,10 @@ logging:
   console_every:       10      # print to console every N episodes
   wandb:               false   # set true to enable W&B logging
   wandb_project:       distrl-market-maker
+
+# ── Hydra Configuration ───────────────────────────────────────────────
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false    # ← keep cwd as project root

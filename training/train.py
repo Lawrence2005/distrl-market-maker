@@ -47,30 +47,51 @@ Week 6 deliverable.
 
 from __future__ import annotations
 
-import json
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]  = ""
+os.environ["OMP_NUM_THREADS"]       = "1"
+os.environ["MKL_NUM_THREADS"]       = "1"
+os.environ["OPENBLAS_NUM_THREADS"]  = "1"
+
+print("Importing torch...", flush=True)
+import torch
+print("Torch imported", flush=True)
+
+import json
 import time
 from collections import deque
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 import hydra
 import numpy as np
-import torch
 from omegaconf import DictConfig, OmegaConf
 
-# ── Project imports ───────────────────────────────────────────────────────────
-from envs.lob_env import LOBMarketMakingEnv, N_OFFSET_LEVELS
-from encoders.handcrafted import HandcraftedEncoder
-from encoders.cnn import CNNEncoder
-from encoders.autoencoder import AEEncoder
-from agents.dqn import DQNAgent
-from agents.qrdqn import QRDQNAgent
-from agents.iqn import IQNAgent
-from agents.ppo import PPOAgent
-from agents.sarsa import SARSAAgent
-from agents.cvar_policy import CVaRPolicy
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# ── Project import ───────────────────────────────────────────────────────────
+from envs.lob_env import LOBMarketMakingEnv, N_OFFSET_LEVELS
+
+def decode_action(flat_action: int) -> np.ndarray:
+    """
+    Decode flat action index → [bid_idx, ask_idx] for MultiDiscrete env.
+
+    flat_action = bid_idx * N_OFFSET_LEVELS + ask_idx
+    """
+    bid_idx = flat_action // N_OFFSET_LEVELS
+    ask_idx = flat_action  % N_OFFSET_LEVELS
+    return np.array([bid_idx, ask_idx], dtype=np.int32)
+
+class _NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Factory helpers
@@ -91,12 +112,15 @@ def build_encoder(enc_cfg: DictConfig) -> torch.nn.Module:
     enc_type = enc_cfg.type
 
     if enc_type == "handcrafted":
+        from encoders.handcrafted import HandcraftedEncoder
         return HandcraftedEncoder(obs_dim=enc_cfg.get("obs_dim", 18))
 
     if enc_type == "cnn":
+        from encoders.cnn import CNNEncoder
         return CNNEncoder.from_config(OmegaConf.to_container(enc_cfg))
 
     if enc_type == "autoencoder":
+        from encoders.autoencoder import AEEncoder
         return AEEncoder.from_checkpoint(enc_cfg.pretrained_weights)
 
     raise ValueError(
@@ -113,7 +137,7 @@ def build_agent(
     device:    str,
     enc_type:    str,
     seed:        int = 42,
-) -> DQNAgent | QRDQNAgent | IQNAgent:
+) -> Any:
     """
     Instantiate agent from config group agent/.
 
@@ -127,7 +151,7 @@ def build_agent(
 
     Returns
     -------
-    DQNAgent | QRDQNAgent | IQNAgent
+    Any
     """
     common = dict(
         encoder        = encoder,
@@ -148,10 +172,35 @@ def build_agent(
 
     agent_type = agent_cfg.get("type", "qrdqn")
 
+    if agent_type == "sarsa":
+        from agents.sarsa import SARSAAgent
+        
+        assert enc_type == "handcrafted", (
+            "SARSAAgent only supports handcrafted encoder. "
+            "Run with encoder=handcrafted."
+        )
+        return SARSAAgent(
+            obs_dim       = int(agent_cfg.get("obs_dim", 18)),
+            n_actions     = n_actions,
+            n_tilings     = agent_cfg.get("n_tilings",     16),
+            n_tiles       = agent_cfg.get("n_tiles",        8),
+            memory_size   = agent_cfg.get("memory_size",   2**14),
+            alpha         = agent_cfg.get("alpha",         0.001),
+            gamma         = agent_cfg.get("gamma",         0.97),
+            lambda_trace  = agent_cfg.get("lambda_trace",  0.96),
+            lambda_i      = tuple(agent_cfg.get("lambda_i", [0.6, 0.1, 0.3])),
+            epsilon       = agent_cfg.get("epsilon",        0.7),
+            epsilon_floor = agent_cfg.get("epsilon_floor", 0.0001),
+            epsilon_T     = agent_cfg.get("epsilon_T",     1000),
+            seed          = seed,
+        )
+
     if agent_type == "dqn":
+        from agents.dqn import DQNAgent
         return DQNAgent(**common)
 
     if agent_type == "qrdqn":
+        from agents.qrdqn import QRDQNAgent
         return QRDQNAgent(
             **common,
             n_quantiles = agent_cfg.get("n_quantiles", 200),
@@ -160,6 +209,7 @@ def build_agent(
         )
 
     if agent_type == "iqn":
+        from agents.iqn import IQNAgent
         return IQNAgent(
             **common,
             n_quantile_samples = agent_cfg.get("n_quantile_samples", 64),
@@ -169,6 +219,7 @@ def build_agent(
         )
     
     if agent_type == "ppo":
+        from agents.ppo import PPOAgent
         return PPOAgent(
             encoder        = encoder,
             n_actions      = n_actions,
@@ -186,27 +237,6 @@ def build_agent(
             device         = device,
         )
 
-    if agent_type == "sarsa":
-        assert enc_type == "handcrafted", (
-            "SARSAAgent only supports handcrafted encoder. "
-            "Run with encoder=handcrafted."
-        )
-        return SARSAAgent(
-            obs_dim       = int(agent_cfg.get("obs_dim", 18)),
-            n_actions     = n_actions,
-            n_tilings     = agent_cfg.get("n_tilings",     32),
-            n_tiles       = agent_cfg.get("n_tiles",        8),
-            memory_size   = agent_cfg.get("memory_size",   2**17),
-            alpha         = agent_cfg.get("alpha",         0.001),
-            gamma         = agent_cfg.get("gamma",         0.97),
-            lambda_trace  = agent_cfg.get("lambda_trace",  0.96),
-            lambda_i      = tuple(agent_cfg.get("lambda_i", [0.6, 0.1, 0.3])),
-            epsilon       = agent_cfg.get("epsilon",        0.7),
-            epsilon_floor = agent_cfg.get("epsilon_floor", 0.0001),
-            epsilon_T     = agent_cfg.get("epsilon_T",     1000),
-            seed          = seed,
-        )
-
     raise ValueError(
         f"Unknown agent type '{agent_type}'. "
         f"Choose from: dqn, qrdqn, iqn, sarsa."
@@ -222,13 +252,21 @@ def wrap_policy(
     Only applies to distributional agents (QR-DQN, IQN).
     For DQN, SARSA, PPO: returns agent unchanged.
     """
-    measure = policy_cfg.get("measure", "cvar")
+    if not policy_cfg:
+        return agent
+    
+    measure = policy_cfg.get("measure", "cvar") if hasattr(policy_cfg, "get") else "cvar"
+
+    from agents.qrdqn import QRDQNAgent
+    from agents.iqn import IQNAgent
 
     if not isinstance(agent, (QRDQNAgent, IQNAgent)):
         return agent   # non-distributional agents: no wrapper
 
     if measure == "mean":
         return agent   # mean is the default for distributional — no wrapper needed
+
+    from agents.cvar_policy import CVaRPolicy
 
     return CVaRPolicy(agent=agent, alpha=alpha, measure=measure)
 
@@ -247,7 +285,8 @@ def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMark
     -------
     LOBMarketMakingEnv
     """
-    return LOBMarketMakingEnv(
+    use_abides = env_cfg.get("use_abides", True)
+    env = LOBMarketMakingEnv(
         reward_type  = reward_cfg.reward_type,
         eta          = reward_cfg.get("eta",  0.5),
         lam          = reward_cfg.get("lam",  0.1),
@@ -257,7 +296,9 @@ def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMark
         kappa        = env_cfg.get("kappa",         1.0),
         n_lob_levels = env_cfg.get("n_lob_levels",  3),
         seed         = seed,
+        use_abides   = use_abides,
     )
+    return env
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -373,6 +414,7 @@ def run_episode(
     obs, info = env.reset(seed=seed)
     agent.reset_hidden(batch_size=1)
 
+    from agents.ppo import PPOAgent
     is_ppo = isinstance(agent, PPOAgent)
 
     step_pnls   = []
@@ -393,7 +435,7 @@ def run_episode(
         else:
             action = agent.act(enc_input, greedy=not training)
 
-        next_obs, reward, terminated, truncated, next_info = env.step(action)
+        next_obs, reward, terminated, truncated, next_info = env.step(decode_action(action))
         next_enc = get_encoder_input(next_obs, next_info, enc_type)
 
         # Step PnL: spread capture + inventory mark-to-market
@@ -450,34 +492,70 @@ def run_episode(
 # Checkpoint helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def save_checkpoint(
-    agent:      DQNAgent | QRDQNAgent | IQNAgent,
-    cfg:        DictConfig,
-    episode:    int,
-    metrics:    dict,
-    ckpt_dir:   Path,
-) -> Path:
-    """Save agent state dict + config + metrics to checkpoint file."""
+def save_checkpoint(agent, cfg, episode, metrics, ckpt_dir):
+    print(f"save_checkpoint called, agent type: {type(agent).__name__}", flush=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    tag  = f"ep{episode:05d}"
-    path = ckpt_dir / f"{tag}.pt"
-    torch.save({
-        "agent_state":  agent.state_dict(),
-        "episode":      episode,
-        "metrics":      metrics,
-        "config":       OmegaConf.to_container(cfg, resolve=True),
-    }, path)
+    tag = f"ep{episode:05d}"
+
+    print("Resolving config...", flush=True)
+    try:
+        config_dict = OmegaConf.to_container(cfg, resolve=True)
+        print("Config resolved OK", flush=True)
+    except Exception as e:
+        print(f"Config resolve failed: {e}", flush=True)
+        config_dict = {}
+
+    from agents.sarsa import SARSAAgent
+    if isinstance(agent, SARSAAgent):
+        # state_dict() called once, saved directly to disk — no tolist()
+        sd   = agent.state_dict()
+        path = ckpt_dir / f"{tag}.npz"
+        np.savez_compressed(
+            str(path),
+            W0=sd["W"][0], W1=sd["W"][1], W2=sd["W"][2],
+            E0=sd["E"][0], E1=sd["E"][1], E2=sd["E"][2],
+            steps=np.array(sd["steps"]),
+            updates=np.array(sd["updates"]),
+        )
+        meta_path = ckpt_dir / f"{tag}_meta.json"
+        with open(meta_path, "w") as f:
+            json.dump({
+                "episode": episode,
+                "metrics": metrics,
+                "config":  config_dict,
+            }, f, indent=2, cls=_NumpyEncoder)
+    else:
+        sd = agent.state_dict()
+        path = ckpt_dir / f"{tag}.pt"
+        torch.save({
+            "agent_state": sd,
+            "episode":     episode,
+            "metrics":     metrics,
+            "config":      config_dict,
+        }, path)
+
     return path
 
 
 def load_checkpoint(
-    agent:    DQNAgent | QRDQNAgent | IQNAgent,
+    agent:    Any,
     path:     str | Path,
 ) -> int:
     """Load agent state from checkpoint. Returns episode number."""
-    ckpt = torch.load(path, map_location="cpu")
-    agent.load_state_dict(ckpt["agent_state"])
-    return ckpt["episode"]
+    from agents.sarsa import SARSAAgent
+    if isinstance(agent, SARSAAgent):
+        data = np.load(str(path))
+        agent.load_state_dict({
+            "W":       [data["W0"], data["W1"], data["W2"]],
+            "E":       [data["E0"], data["E1"], data["E2"]],
+            "steps":   int(data["steps"]),
+            "updates": int(data["updates"]),
+        })
+        return int(np.load(str(path).replace(".npz", "_meta.json")))
+    else:
+        ckpt = torch.load(path, map_location="cpu")
+        agent.load_state_dict(ckpt["agent_state"])
+        return ckpt["episode"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -494,6 +572,7 @@ def train(cfg: DictConfig) -> None:
     Called once per run. In multirun mode, Hydra calls this function
     once per config combination.
     """
+
     # ── Setup ─────────────────────────────────────────────────────────
     seed = int(cfg.seed)
     np.random.seed(seed)
@@ -501,17 +580,19 @@ def train(cfg: DictConfig) -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"\n{'='*60}")
-    print(OmegaConf.to_yaml(cfg))
+    print(OmegaConf.to_yaml(cfg), flush=True)
     print(f"Device: {device}")
-    print(f"{'='*60}\n")
+    print(f"{'='*60}\n", flush=True)
 
     # ── Build components ───────────────────────────────────────────────
-    encoder   = build_encoder(cfg.encoder)
+    print("Building encoder...", flush=True)
+    encoder = build_encoder(cfg.encoder)
+    print(f"Encoder built: {encoder}", flush=True)
+
     n_actions = N_OFFSET_LEVELS ** 2   # flat MultiDiscrete action space
+    alpha = float(cfg.get("alpha", cfg.agent.get("cvar_alpha", 0.25)))  # Override CVaR alpha from top-level config
 
-    # Override CVaR alpha from top-level config
-    alpha = float(cfg.get("alpha", cfg.agent.get("cvar_alpha", 0.25)))
-
+    print("Building agent...", flush=True)
     agent = build_agent(
         cfg.agent,
         encoder,
@@ -521,17 +602,33 @@ def train(cfg: DictConfig) -> None:
         enc_type = cfg.encoder.type,
         seed     = int(cfg.seed),
     )
-    agent  = wrap_policy(agent, cfg.policy, alpha)
-    env   = build_env(cfg.env, cfg.reward, seed)
+    print(f"Agent built: {agent}", flush=True)
+
+    print("Wrapping policy...", flush=True)
+    agent = wrap_policy(agent, cfg.get("policy", {}), alpha)
+    print(f"Policy wrapped: {agent}", flush=True)
+
+    print("Building env...", flush=True)
+    env = build_env(cfg.env, cfg.reward, seed)
+    print(f"Env built: {env}", flush=True)
+
+    if not cfg.env.get("use_abides", True):
+        env._abides_env = None
+        print("Running with synthetic GBM (use_abides=false)")
 
     enc_type = cfg.encoder.type
 
     # ── Output directories ─────────────────────────────────────────────
-    # Hydra sets cwd to outputs/<date>/<time>/ for each run
-    run_dir  = Path(".")
-    ckpt_dir = run_dir / cfg.training.checkpoint_dir
-    log_dir  = run_dir / cfg.training.log_dir
+    run_tag  = f"{cfg.agent.type}_{cfg.encoder.type}_{cfg.reward.reward_type}_seed{seed}"
+    project_root = Path(__file__).resolve().parents[1]
+    
+    ckpt_dir = project_root / cfg.training.checkpoint_dir / run_tag
+    log_dir  = project_root / cfg.training.log_dir / run_tag
+    
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Checkpoint dir: {ckpt_dir}", flush=True)
+    print(f"Log dir: {log_dir}", flush=True)
 
     # ── Training state ─────────────────────────────────────────────────
     n_episodes      = int(cfg.training.n_episodes)
@@ -611,15 +708,19 @@ def train(cfg: DictConfig) -> None:
             print(f"  checkpoint saved → {path}")
 
     # ── Final save ─────────────────────────────────────────────────────
+    print("Saving final checkpoint...", flush=True)
     final_path = save_checkpoint(agent, cfg, n_episodes,
                                  train_history[-1], ckpt_dir)
-    print(f"\nFinal checkpoint → {final_path}")
+    print(f"\nFinal checkpoint → {final_path}", flush=True)
 
     # ── Save histories ─────────────────────────────────────────────────
+    print("Saving train history...", flush=True)
     with open(log_dir / "train_history.json", "w") as f:
-        json.dump(train_history, f, indent=2)
+        json.dump(train_history, f, indent=2, cls=_NumpyEncoder)
+
+    print("Saving eval history...", flush=True)
     with open(log_dir / "eval_history.json", "w") as f:
-        json.dump(eval_history, f, indent=2)
+        json.dump(eval_history, f, indent=2, cls=_NumpyEncoder)
 
     # ── Final summary ──────────────────────────────────────────────────
     if eval_history:
@@ -627,7 +728,7 @@ def train(cfg: DictConfig) -> None:
         print(f"\nBest eval Sharpe: {best['sharpe']:+.4f} at episode {best['episode']}")
 
     env.close()
-    print("Training complete.")
+    print("Training complete.", flush=True)
 
     # Return best eval Sharpe for Hydra multirun optimisation
     return best["sharpe"] if eval_history else 0.0

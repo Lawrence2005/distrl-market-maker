@@ -311,8 +311,21 @@ class IQNAgent:
             dueling       = dueling,
         ).to(self.device)
 
-        self.target_base = copy.deepcopy(self.online_base).to(self.device)
-        self.target_head = copy.deepcopy(self.online_head).to(self.device)
+        self.target_base = RecurrentBase(
+            encoder    = copy.deepcopy(encoder),
+            n_actions  = n_actions,
+            hidden_dim = hidden_dim,
+            dueling    = False,
+        ).to(self.device)
+        self.target_base.load_state_dict(self.online_base.state_dict())
+
+        self.target_head = IQNHead(
+            hidden_dim    = hidden_dim,
+            n_actions     = n_actions,
+            embedding_dim = embedding_dim,
+            dueling       = dueling,
+        ).to(self.device)
+        self.target_head.load_state_dict(self.online_head.state_dict())
 
         self.target_base.eval()
         self.target_head.eval()
@@ -517,36 +530,32 @@ class IQNAgent:
 
         # ── Online Z(s,a,τ) at last step ─────────────────────────────
         self.online_base.reset_hidden(batch_size=B, device=self.device)
-        Z_all, tau = self._online_forward(obs, K)         # (B, K, n_actions), (B, K)
+        Z_all, tau = self._online_forward(obs, K)      # (B, K, n_actions), (B, K)
 
-        # Gather Z for taken action: (B, K)
-        a_last = actions[:, -1]                           # (B,)
-        a_idx  = a_last.view(B, 1, 1).expand(B, K, 1)
-        Z_sa   = Z_all.gather(2, a_idx).squeeze(2)        # (B, K)
+        # Gather Z for taken action
+        a_last    = actions[:, -1]                     # (B,)
+        a_idx     = a_last.view(B, 1, 1).expand(B, K, 1)
+        Z_sa      = Z_all.gather(2, a_idx).squeeze(2)  # (B, K)
 
-        # ── Target Z(s', a*) at last step ────────────────────────────
+        # ── Target Z(s', a*) at last step ─────────────────────────────
         with torch.no_grad():
             self.target_base.reset_hidden(batch_size=B, device=self.device)
-            Z_next, tau_prime = self._target_forward(next_obs, K)  # (B, K, n_actions)
+            Z_next, tau_prime = self._target_forward(next_obs, K)
 
             # Double DQN: greedy action from online net
             self.online_base.reset_hidden(batch_size=B, device=self.device)
             Z_online_next, _ = self._online_forward(next_obs, K)
-            a_next = Z_online_next.mean(dim=1).argmax(dim=-1)      # (B,)
+            a_next = Z_online_next.mean(dim=1).argmax(dim=-1)  # (B,)
 
             a_next_idx = a_next.view(B, 1, 1).expand(B, K, 1)
-            Z_next_sa  = Z_next.gather(2, a_next_idx).squeeze(2)   # (B, K)
+            Z_next_sa  = Z_next.gather(2, a_next_idx).squeeze(2)  # (B, K)
 
-            r     = rewards[:, -1].unsqueeze(1)   # (B, 1)
-            d     = dones[:, -1].unsqueeze(1)     # (B, 1)
-            Z_tgt = r + self.gamma * Z_next_sa * (1.0 - d)         # (B, K)
+            r     = rewards[:, -1].unsqueeze(1)
+            d     = dones[:, -1].unsqueeze(1)
+            Z_tgt = r + self.gamma * Z_next_sa * (1.0 - d)        # (B, K)
 
         # ── IQN quantile regression loss ──────────────────────────────
-        # Reuse QR-DQN loss with sampled taus
-        # tau shape (B, K) → need (K,) for the loss function
-        # Use mean tau across batch as the quantile levels
-        taus_mean = tau.mean(dim=0)   # (K,) — average quantile levels
-
+        taus_mean    = tau.mean(dim=0)   # (K,)
         element_loss = QRDQNAgent._quantile_huber_loss(
             Z_sa, Z_tgt, taus_mean, self.kappa
         )
@@ -571,6 +580,10 @@ class IQNAgent:
         if self._updates % self.target_update_freq == 0:
             self.target_base.load_state_dict(self.online_base.state_dict())
             self.target_head.load_state_dict(self.online_head.state_dict())
+
+        # ── Restore hidden state for single-step inference ────────────
+        self.online_base.reset_hidden(batch_size=1, device=self.device)
+        self.target_base.reset_hidden(batch_size=1, device=self.device)
 
         return float(loss.item())
 

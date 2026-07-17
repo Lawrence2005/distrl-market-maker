@@ -257,7 +257,7 @@ class SARSAAgent:
         self.alpha         = alpha
         self.gamma         = gamma
         self.lambda_trace  = lambda_trace
-        self.lambda_i      = np.array(lambda_i, dtype=np.float64)
+        self.lambda_i      = np.array(lambda_i, dtype=np.float32)
         self.epsilon_start = epsilon
         self.epsilon_floor = epsilon_floor
         self.epsilon_T     = epsilon_T
@@ -304,14 +304,14 @@ class SARSAAgent:
         # W_i shape: (memory_size, n_actions)
         # Initialised to zero (standard for tile coding)
         self.W = [
-            np.zeros((tc.n_weights, n_actions), dtype=np.float64)
+            np.zeros((tc.n_weights, n_actions), dtype=np.float32)
             for tc in self.tile_codings
         ]
 
         # ── Eligibility traces ────────────────────────────────────────
         # e_i shape: (memory_size, n_actions) — matching W_i
         self.E = [
-            np.zeros((tc.n_weights, n_actions), dtype=np.float64)
+            np.zeros((tc.n_weights, n_actions), dtype=np.float32)
             for tc in self.tile_codings
         ]
 
@@ -566,8 +566,8 @@ class SARSAAgent:
     def state_dict(self) -> dict:
         """Return full agent state for checkpointing."""
         return {
-            "W":       [w.tolist() for w in self.W],
-            "E":       [e.tolist() for e in self.E],
+            "W":       self.W,
+            "E":       self.E,
             "steps":   self._steps,
             "updates": self._updates,
         }

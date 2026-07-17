@@ -3,9 +3,9 @@ type: sarsa
 
 obs_dim: 18
 
-n_tilings:     32
+n_tilings:     16
 n_tiles:       8
-memory_size:   131072    # 2^17
+memory_size:   16384    # 2^14
 
 alpha:         0.001
 gamma:         0.97

@@ -109,6 +109,8 @@ class QuantileHead(nn.Module):
         dueling:     bool = True,
     ):
         super().__init__()
+        print(f"QuantileHead init: input={input_dim} actions={n_actions} quantiles={n_quantiles}", flush=True)
+
         self.n_actions   = n_actions
         self.n_quantiles = n_quantiles
         self.dueling     = dueling
@@ -133,6 +135,7 @@ class QuantileHead(nn.Module):
                 nn.ReLU(),
                 nn.Linear(mid, n_actions * n_quantiles),
             )
+        print("QuantileHead streams created", flush=True)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         """
@@ -235,12 +238,14 @@ class QRDQNAgent:
 
         # ── Networks ──────────────────────────────────────────────────
         # RecurrentBase with dueling=False — we add our own quantile head
+        print("Creating network...", flush=True)
         self.online_base = RecurrentBase(
             encoder    = encoder,
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = False,   # head added separately below
         ).to(self.device)
+        print("online_base created", flush=True)
 
         self.online_head = QuantileHead(
             input_dim   = hidden_dim,
@@ -248,9 +253,26 @@ class QRDQNAgent:
             n_quantiles = n_quantiles,
             dueling     = dueling,
         ).to(self.device)
+        print("online_head created", flush=True)
 
-        self.target_base = copy.deepcopy(self.online_base).to(self.device)
-        self.target_head = copy.deepcopy(self.online_head).to(self.device)
+        
+        self.target_base = RecurrentBase(
+            encoder    = copy.deepcopy(encoder),
+            n_actions  = n_actions,
+            hidden_dim = hidden_dim,
+            dueling    = False,
+        ).to(self.device)
+        self.target_base.load_state_dict(self.online_base.state_dict())
+        print("target_base created", flush=True)
+
+        self.target_head = QuantileHead(
+            input_dim   = hidden_dim,
+            n_actions   = n_actions,
+            n_quantiles = n_quantiles,
+            dueling     = dueling,
+        ).to(self.device)
+        self.target_head.load_state_dict(self.online_head.state_dict())
+        print("Networks created", flush=True)
 
         self.target_base.eval()
         self.target_head.eval()
@@ -478,39 +500,38 @@ class QRDQNAgent:
 
         B, T, _ = obs.shape
 
-        # ── Online Z(s,a) at last step of sequence ────────────────────
+        # ── Online Z(s,a) at last step ────────────────────────────────
         self.online_base.reset_hidden(batch_size=B, device=self.device)
-        Z_all = self._online_forward(obs)          # (B, T, n_actions, N)
-        Z_last = Z_all[:, -1, :, :]               # (B, n_actions, N)
+        Z_all  = self._online_forward(obs)             # (B, T, n_actions, N)
+        Z_last = Z_all[:, -1, :, :]                    # (B, n_actions, N)
 
         # Gather quantiles for taken action
-        a_last = actions[:, -1]                   # (B,)
+        a_last = actions[:, -1]                        # (B,)
         a_idx  = a_last.view(B, 1, 1).expand(B, 1, self.n_quantiles)
-        Z_sa   = Z_last.gather(1, a_idx).squeeze(1)  # (B, N)
+        Z_sa   = Z_last.gather(1, a_idx).squeeze(1)   # (B, N)
 
         # ── Target Z(s', a*) at last step ─────────────────────────────
         with torch.no_grad():
             self.target_base.reset_hidden(batch_size=B, device=self.device)
-            Z_next_all  = self._target_forward(next_obs)  # (B, T, n_actions, N)
-            Z_next_last = Z_next_all[:, -1, :, :]         # (B, n_actions, N)
+            Z_next_all  = self._target_forward(next_obs)
+            Z_next_last = Z_next_all[:, -1, :, :]
 
-            # Greedy next action from online net (Double DQN style)
+            # Double DQN: greedy next action from online net
             self.online_base.reset_hidden(batch_size=B, device=self.device)
             Z_online_next = self._online_forward(next_obs)[:, -1, :, :]
-            a_next = Z_online_next.mean(dim=-1).argmax(dim=-1)  # (B,)
+            a_next = Z_online_next.mean(dim=-1).argmax(dim=-1)
 
             a_next_idx = a_next.view(B, 1, 1).expand(B, 1, self.n_quantiles)
-            Z_next_sa  = Z_next_last.gather(1, a_next_idx).squeeze(1)  # (B, N)
+            Z_next_sa  = Z_next_last.gather(1, a_next_idx).squeeze(1)
 
-            # Bellman target per quantile
-            r    = rewards[:, -1].unsqueeze(1)    # (B, 1)
-            d    = dones[:, -1].unsqueeze(1)      # (B, 1)
-            Z_tgt = r + self.gamma * Z_next_sa * (1.0 - d)  # (B, N)
+            r     = rewards[:, -1].unsqueeze(1)
+            d     = dones[:, -1].unsqueeze(1)
+            Z_tgt = r + self.gamma * Z_next_sa * (1.0 - d)
 
         # ── Quantile regression loss ───────────────────────────────────
-        element_loss = self._quantile_huber_loss(Z_sa, Z_tgt, self.taus, self.kappa)
-
-        # IS-weighted loss (scalar for PER; weights=1 for uniform)
+        element_loss = self._quantile_huber_loss(
+            Z_sa, Z_tgt, self.taus, self.kappa
+        )
         loss = (is_w * element_loss).mean() if is_w.shape == (B,) else element_loss
 
         # ── Gradient update ───────────────────────────────────────────
@@ -532,6 +553,10 @@ class QRDQNAgent:
         if self._updates % self.target_update_freq == 0:
             self.target_base.load_state_dict(self.online_base.state_dict())
             self.target_head.load_state_dict(self.online_head.state_dict())
+
+        # ── Restore hidden state for single-step inference ────────────
+        self.online_base.reset_hidden(batch_size=1, device=self.device)
+        self.target_base.reset_hidden(batch_size=1, device=self.device)
 
         return float(loss.item())
 

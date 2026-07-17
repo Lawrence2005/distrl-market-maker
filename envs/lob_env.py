@@ -19,7 +19,7 @@ from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecut
 
 # Action space: bid/ask offsets in ticks
 # δ ∈ {−10, −9, ..., 0, +1, ..., +10} → 11 levels per side → 121 total
-TICK_OFFSETS = np.arange(0, 81)   # shape (11,)
+TICK_OFFSETS = np.arange(0, 11)   # shape (11,)
 N_OFFSET_LEVELS = len(TICK_OFFSETS) # = 11
 
 # Rolling-history window caps (avoid unbounded memory growth)
@@ -83,10 +83,14 @@ class LOBMarketMakingEnv(gym.Env):
         kappa: float = 1.0,
         n_lob_levels: int = 3,
         seed: int = 42,
+        use_abides: bool = True,
     ):
         super().__init__()
 
-        self._abides_env = AbidesMarketMakingEnv(background_config="rmsc04")
+        if use_abides:
+            self._abides_env = AbidesMarketMakingEnv(background_config="rmsc04")
+        else:
+            self._abides_env = None
 
         cfg = {}
         if config is not None:
@@ -468,19 +472,23 @@ class LOBMarketMakingEnv(gym.Env):
 
         self._reset_state()
 
-        _ = self._abides_env.reset()  # returns processed obs array — ignore it
-
-        # Read raw_state directly from the gym agent after reset
-        # raw_state is a deque; [-1] is the most recent snapshot
-        raw_state = self._abides_env.gym_agent.raw_state[-1]
-
-        self._mid_price = self._extract_mid_price(raw_state)
-        self._prev_mid  = self._mid_price
-        self._price_history.append(self._mid_price)
-
-        parsed = self._parse_abides_step(raw_state)
-        if parsed["lob_snapshot"]["bid_sizes"]:
-            self._lob_history.append(parsed["lob_snapshot"])
+        if self._abides_env is not None:
+            # ── Real ABIDES path ──────────────────────────────────────────
+            _ = self._abides_env.reset()
+            raw_state = self._abides_env.gym_agent.raw_state[-1]
+            self._mid_price = self._extract_mid_price(raw_state)
+            self._prev_mid  = self._mid_price
+            self._price_history.append(self._mid_price)
+            parsed = self._parse_abides_step(raw_state)
+            if parsed["lob_snapshot"]["bid_sizes"]:
+                self._lob_history.append(parsed["lob_snapshot"])
+            cash = parsed["cash"]
+        else:
+            # ── Synthetic GBM fallback ────────────────────────────────────
+            self._mid_price = 100.0
+            self._prev_mid  = self._mid_price
+            self._price_history.append(self._mid_price)
+            cash = 0.0
 
         obs  = self._get_obs()
         info = {
@@ -500,20 +508,28 @@ class LOBMarketMakingEnv(gym.Env):
         self._bid_dist = float(bid_offset)
         self._ask_dist = float(ask_offset)
 
-        abides_action       = self._encode_abides_action(bid_price, ask_price)
-        _, _, done, _       = self._abides_env.step(abides_action)  # 4-tuple old gym API
-
-        # Read raw_state from agent after step (same pattern as reset)
-        raw_state = self._abides_env.gym_agent.raw_state[-1]
-
-        parsed    = self._parse_abides_step(raw_state)
-        new_mid   = self._extract_mid_price(raw_state)
-
-        bid_filled = parsed["bid_qty"]
-        ask_filled = parsed["ask_qty"]
-        signed_vol = parsed["signed_volume"]
-        lob_snap   = parsed["lob_snapshot"]
-
+        if self._abides_env is not None:
+            abides_action     = self._encode_abides_action(bid_price, ask_price)
+            _, _, done, _     = self._abides_env.step(abides_action)
+            raw_state         = self._abides_env.gym_agent.raw_state[-1]
+            parsed            = self._parse_abides_step(raw_state)
+            new_mid           = self._extract_mid_price(raw_state)
+            bid_filled        = parsed["bid_qty"]
+            ask_filled        = parsed["ask_qty"]
+            signed_vol        = parsed["signed_volume"]
+            lob_snap          = parsed["lob_snapshot"]
+            terminated        = done
+        else:
+            # Synthetic GBM fallback
+            bid_filled = 0
+            ask_filled = 0
+            signed_vol = 0
+            lob_snap   = {}
+            new_mid    = self._mid_price * np.exp(
+                self._rng.normal(0.0, self.tick_size / self._mid_price)
+            )
+            terminated = False
+            
         # ── Update internal state ──────────────────────────────────────
         self._prev_mid  = self._mid_price
         self._mid_price = max(new_mid, self.tick_size)   # price must stay positive
@@ -585,7 +601,11 @@ class LOBMarketMakingEnv(gym.Env):
             "reward":      reward,
             "signed_volume":   signed_vol,
             "queue_imbalance": float(obs[2]),   # obs[2] is imbalance (computed)
-            "market_spread": lob_snap["ask_prices"][0] - lob_snap["bid_prices"][0] if lob_snap["ask_prices"] and lob_snap["bid_prices"] else 0.0
+            "market_spread": (
+                    lob_snap["ask_prices"][0] - lob_snap["bid_prices"][0]
+                    if lob_snap.get("ask_prices") and lob_snap.get("bid_prices")
+                    else 0.0
+                )
         }
         return obs, reward, terminated, truncated, info
 
@@ -611,7 +631,7 @@ class LOBMarketMakingEnv(gym.Env):
         """
         Clean up resources.
         """
-        if hasattr(self, "_abides_env"):
+        if self._abides_env is not None:
             self._abides_env.close()
 
     # ------------------------------------------------------------------

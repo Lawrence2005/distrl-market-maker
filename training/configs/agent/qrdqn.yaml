@@ -1,6 +1,6 @@
 # QR-DQN agent config
 type: qrdqn
-n_quantiles: 200
+n_quantiles: 32    # was 200 — use 32 for local testing, 200 for HPC runs
 hidden_dim: 256
 dueling: true
 prioritized_replay: true

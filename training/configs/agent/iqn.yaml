@@ -1,7 +1,7 @@
 # IQN agent config
 type: iqn
-n_quantile_samples: 64
-embedding_dim: 64
+n_quantile_samples: 16    # was 64
+embedding_dim: 32         # was 64
 hidden_dim: 256
 lr: 0.0001
 batch_size: 256

@@ -40,6 +40,8 @@ Week 5 deliverable.
 
 from __future__ import annotations
 
+import copy
+
 from typing import Optional
 
 import numpy as np
@@ -113,8 +115,14 @@ class DQNAgent:
         ).to(self.device)
 
         # Target network: same architecture, weights updated periodically
-        import copy
-        self.target = copy.deepcopy(self.online).to(self.device)
+        self.target = RecurrentBase(
+            encoder    = copy.deepcopy(encoder),
+            n_actions  = n_actions,
+            hidden_dim = hidden_dim,
+            dueling    = True,
+        ).to(self.device)
+        self.target.load_state_dict(self.online.state_dict())
+
         self.target.eval()
         for p in self.target.parameters():
             p.requires_grad = False
@@ -269,6 +277,10 @@ class DQNAgent:
         self._updates += 1
         if self._updates % self.target_update_freq == 0:
             self.target.load_state_dict(self.online.state_dict())
+        
+        # ── Restore hidden state for single-step inference ────────────
+        self.online.reset_hidden(batch_size=1, device=self.device)
+        self.target.reset_hidden(batch_size=1, device=self.device)
 
         return float(loss.item())
 
