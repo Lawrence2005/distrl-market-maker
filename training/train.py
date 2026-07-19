@@ -537,21 +537,20 @@ def save_checkpoint(agent, cfg, episode, metrics, ckpt_dir):
     return path
 
 
-def load_checkpoint(
-    agent:    Any,
-    path:     str | Path,
-) -> int:
-    """Load agent state from checkpoint. Returns episode number."""
+def load_checkpoint(agent, path):
     from agents.sarsa import SARSAAgent
     if isinstance(agent, SARSAAgent):
-        data = np.load(str(path))
+        data     = np.load(str(path))
+        meta_path = Path(str(path).replace(".npz", "_meta.json"))
+        with open(meta_path) as f:
+            meta = json.load(f)
         agent.load_state_dict({
             "W":       [data["W0"], data["W1"], data["W2"]],
             "E":       [data["E0"], data["E1"], data["E2"]],
             "steps":   int(data["steps"]),
             "updates": int(data["updates"]),
         })
-        return int(np.load(str(path).replace(".npz", "_meta.json")))
+        return meta["episode"]
     else:
         ckpt = torch.load(path, map_location="cpu")
         agent.load_state_dict(ckpt["agent_state"])
@@ -619,16 +618,24 @@ def train(cfg: DictConfig) -> None:
     enc_type = cfg.encoder.type
 
     # ── Output directories ─────────────────────────────────────────────
-    run_tag  = f"{cfg.agent.type}_{cfg.encoder.type}_{cfg.reward.reward_type}_seed{seed}"
+    agent_type   = cfg.agent.get("type", "agent")
+    encoder_type = cfg.encoder.get("type", "encoder")
+    reward_type  = cfg.reward.get("reward_type", "reward")
+    regime       = cfg.env.get("regime", "base") or "base"
+    variant_tag  = "_recurrent" if cfg.get("variant") else ""
+    run_tag      = (
+        f"{agent_type}_{encoder_type}_{reward_type}"
+        f"_{regime}{variant_tag}_seed{seed}"
+    )
+
     project_root = Path(__file__).resolve().parents[1]
-    
-    ckpt_dir = project_root / cfg.training.checkpoint_dir / run_tag
-    log_dir  = project_root / cfg.training.log_dir / run_tag
-    
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir     = project_root / cfg.training.checkpoint_dir / run_tag
+    log_dir      = project_root / cfg.training.log_dir / run_tag
     log_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Checkpoint dir: {ckpt_dir}", flush=True)
-    print(f"Log dir: {log_dir}", flush=True)
+
+    print(f"Run tag:    {run_tag}", flush=True)
+    print(f"Checkpoint: {ckpt_dir}", flush=True)
+    print(f"Logs:       {log_dir}", flush=True)
 
     # ── Training state ─────────────────────────────────────────────────
     n_episodes      = int(cfg.training.n_episodes)
