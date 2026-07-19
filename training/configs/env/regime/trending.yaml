@@ -1,0 +1,11 @@
+# configs/env/regime/trending.yaml
+# Trending regime — persistent directional price drift.
+# Tests whether agents can adapt quote skew to a trending market
+# where inventory accumulates systematically on one side.
+
+# @package env
+sigma_override: 0.015    # moderate vol with drift
+episode_len: 390
+Q_max: 10
+kappa: 1.0
+drift: 0.0002            # upward drift per step (~8% annualised at 390 steps/day)

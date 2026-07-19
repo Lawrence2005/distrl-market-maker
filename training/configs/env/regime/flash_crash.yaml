@@ -1,0 +1,28 @@
+# configs/env/regime/flash_crash.yaml
+# Flash crash regime — sudden severe price drop followed by partial recovery.
+# Used for Week 9 stress test: compares DQN vs QR-DQN(α=0.05) max drawdown.
+#
+# Crash structure:
+#   Steps 0-149:   normal low-vol regime (warm-up)
+#   Steps 150-169: crash — rapid price drop (~10%) over 20 steps
+#   Steps 170-249: partial recovery — price recovers ~50% of drop
+#   Steps 250-390: post-crash low-vol (regime shift, elevated vol)
+#
+# The crash is injected by lob_env.py when regime=flash_crash by
+# applying a deterministic price shock at step 150. Agents trained
+# on low_vol or high_vol have never seen this pattern.
+
+# @package env
+sigma_override: 0.008    # low vol pre-crash (same as low_vol)
+episode_len: 390
+Q_max: 10
+kappa: 1.0
+
+# Flash crash parameters (read by LOBMarketMakingEnv._gbm_step)
+flash_crash:
+  crash_start_step: 150
+  crash_duration:   20       # steps over which price falls
+  crash_magnitude:  0.10     # fractional price drop (10%)
+  recovery_frac:    0.50     # fraction of drop recovered
+  recovery_duration: 80      # steps for recovery
+  post_crash_sigma: 0.015    # elevated vol after crash
