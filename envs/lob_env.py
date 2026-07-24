@@ -106,8 +106,20 @@ class LOBMarketMakingEnv(gym.Env):
         self.kappa = cfg.get("kappa", kappa)
         self.n_lob_levels = cfg.get("n_lob_levels", n_lob_levels)
         self.seed_val = cfg.get("seed", seed)
+
+        # Flash crash params (read from regime config via build_env)
+        self._crash_start   = None   # step at which crash begins
+        self._crash_mag     = 0.0    # fractional price drop
+        self._crash_dur     = 0      # steps over which price falls
+        self._recovery_frac = 0.0    # fraction of drop recovered
+        self._recovery_dur  = 0      # steps for recovery
+        self._post_sigma    = None   # elevated vol after crash
+        self._crash_drop    = 0.0    # computed dollar drop (set at crash start)
                         
         assert self.reward_type in ("asymmetric", "quadratic", "sparse"), (f"reward_type must be 'asymmetric', 'quadratic', or 'sparse', "f"got '{self.reward_type}'")
+
+        self._drift = 0.0   # per-step log drift for trending regime
+        self._sigma_override = None  # optional vol override
 
         # ── Action space: two 9-dim heads (MultiDiscrete) ─────────────
         self.action_space = spaces.MultiDiscrete([N_OFFSET_LEVELS, N_OFFSET_LEVELS])
@@ -525,9 +537,7 @@ class LOBMarketMakingEnv(gym.Env):
             ask_filled = 0
             signed_vol = 0
             lob_snap   = {}
-            new_mid    = self._mid_price * np.exp(
-                self._rng.normal(0.0, self.tick_size / self._mid_price)
-            )
+            new_mid = self._gbm_step()
             terminated = False
             
         # ── Update internal state ──────────────────────────────────────
@@ -633,6 +643,46 @@ class LOBMarketMakingEnv(gym.Env):
         """
         if self._abides_env is not None:
             self._abides_env.close()
+
+    def _gbm_step(self) -> float:
+        """
+        Advance synthetic mid-price one step.
+        Handles normal GBM, trending drift, and flash crash injection.
+        """
+        # Base sigma
+        sigma = self._sigma_override / self._mid_price if self._sigma_override is not None else self.tick_size / self._mid_price
+
+        # Post-crash elevated vol
+        if self._post_sigma is not None and self._crash_start is not None:
+            crash_end = self._crash_start + self._crash_dur + self._recovery_dur
+            if self._step >= crash_end:
+                sigma = self._post_sigma / self._mid_price
+
+        # Trending drift
+        drift = getattr(self, '_drift', 0.0)
+
+        # Flash crash — sudden drop
+        if (self._crash_start is not None
+                and self._step == self._crash_start):
+            self._crash_drop = self._mid_price * self._crash_mag
+            return self._mid_price - self._crash_drop / self._crash_dur
+
+        # Flash crash — continuing drop
+        if (self._crash_start is not None
+                and self._crash_drop > 0
+                and self._step < self._crash_start + self._crash_dur):
+            return self._mid_price - self._crash_drop / self._crash_dur
+
+        # Flash crash — recovery
+        if (self._crash_start is not None
+                and self._crash_drop > 0
+                and self._step < self._crash_start + self._crash_dur + self._recovery_dur):
+            recovery_per_step = (self._crash_drop * self._recovery_frac) / self._recovery_dur
+            return self._mid_price + recovery_per_step
+
+        # Normal GBM + optional drift
+        shock = self._rng.normal(drift, sigma)
+        return max(self._mid_price * np.exp(shock), self.tick_size)
 
     # ------------------------------------------------------------------
     # ABIDES-Gym wiring hooks  (implement when attaching real simulator)

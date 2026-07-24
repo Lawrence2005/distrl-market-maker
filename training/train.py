@@ -79,9 +79,8 @@ def decode_action(flat_action: int) -> np.ndarray:
 
     flat_action = bid_idx * N_OFFSET_LEVELS + ask_idx
     """
-    bid_idx = flat_action // N_OFFSET_LEVELS
-    ask_idx = flat_action  % N_OFFSET_LEVELS
-    return np.array([bid_idx, ask_idx], dtype=np.int32)
+    return np.array([flat_action % N_OFFSET_LEVELS,
+                     flat_action // N_OFFSET_LEVELS], dtype=np.int64)
 
 class _NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -286,6 +285,7 @@ def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMark
     LOBMarketMakingEnv
     """
     use_abides = env_cfg.get("use_abides", True)
+    print(f"build_env: use_abides={use_abides}", flush=True)
     env = LOBMarketMakingEnv(
         reward_type  = reward_cfg.reward_type,
         eta          = reward_cfg.get("eta",  0.5),
@@ -298,6 +298,23 @@ def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMark
         seed         = seed,
         use_abides   = use_abides,
     )
+
+    sigma_override = env_cfg.get("sigma_override", None)
+    if sigma_override is not None:
+        env._sigma_override = float(sigma_override)
+
+    if env_cfg.get("regime") == "flash_crash":
+        fc = env_cfg.get("flash_crash", {})
+        env._crash_start   = fc.get("crash_start_step", 150)
+        env._crash_mag     = fc.get("crash_magnitude",   0.10)
+        env._crash_dur     = fc.get("crash_duration",    20)
+        env._recovery_frac = fc.get("recovery_frac",     0.50)
+        env._recovery_dur  = fc.get("recovery_duration", 80)
+        env._post_sigma    = fc.get("post_crash_sigma",  0.015)
+
+    if env_cfg.get("regime") == "trending":
+        env._drift = env_cfg.get("drift", 0.0002)
+
     return env
 
 
@@ -411,7 +428,9 @@ def run_episode(
     -------
     dict with keys: sharpe, map, mdd, final_pnl, mean_loss, steps, epsilon
     """
+    print("run_episode called", flush=True)
     obs, info = env.reset(seed=seed)
+    print(f"env.reset done, obs shape={obs.shape}", flush=True)
     agent.reset_hidden(batch_size=1)
 
     from agents.ppo import PPOAgent
@@ -430,12 +449,15 @@ def run_episode(
 
     while not (terminated or truncated):
         enc_input = get_encoder_input(obs, info, enc_type)
+        print(f"step {len(step_pnls)}: acting...", flush=True)
         if is_ppo:
             action, value, log_prob = agent.act_with_value(enc_input)
         else:
             action = agent.act(enc_input, greedy=not training)
 
+        print(f"step {len(step_pnls)}: action={action}, stepping env...", flush=True)
         next_obs, reward, terminated, truncated, next_info = env.step(decode_action(action))
+        print(f"step {len(step_pnls)}: env.step done", flush=True)
         next_enc = get_encoder_input(next_obs, next_info, enc_type)
 
         # Step PnL: spread capture + inventory mark-to-market
@@ -655,6 +677,7 @@ def train(cfg: DictConfig) -> None:
 
     t_start = time.time()
 
+    print("Starting episode loop...", flush=True)
     # ── Episode loop ───────────────────────────────────────────────────
     for ep in range(1, n_episodes + 1):
         ep_seed = seed + ep

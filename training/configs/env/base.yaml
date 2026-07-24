@@ -8,7 +8,7 @@ kappa: 1.0
 n_lob_levels: 3
 seed: 42
 
-use_abides: true
+use_abides: false
 
 # Hawkes arrival process (fitted Week 2, data/calibration/hawkes_params.json)
 hawkes:
