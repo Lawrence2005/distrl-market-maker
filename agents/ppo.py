@@ -86,6 +86,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
 
+from agents.base import AgentBase
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Shared Actor-Critic network
@@ -274,7 +275,7 @@ class TrajectoryBuffer:
 # PPO agent
 # ══════════════════════════════════════════════════════════════════════════════
 
-class PPOAgent:
+class PPOAgent(AgentBase):
     """
     PPO agent with KL-penalty, shared Actor-Critic backbone, GAE.
 
@@ -343,8 +344,6 @@ class PPOAgent:
         self._steps   = 0
         self._updates = 0
 
-        # epsilon property for interface compatibility with training loop
-        self._epsilon = 0.0   # PPO uses stochastic policy, no ε-greedy
 
     # ------------------------------------------------------------------
     # Interface compatibility

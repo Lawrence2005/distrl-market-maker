@@ -47,6 +47,8 @@ This project builds a distributional RL market maker using QR-DQN and IQN with a
 ```
 
 ## Setup
+Requires Python 3.10+
+
 ```bash
 git clone https://github.com/<your-handle>/distrl-market-maker
 cd distrl-market-maker

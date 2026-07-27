@@ -44,10 +44,19 @@ Week 8 deliverable.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Optional
+import sys
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 from scipy import stats
+
+
+def _ensure_repo_on_path() -> None:
+    """Ensure repository root is importable from standalone script execution."""
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -89,8 +98,7 @@ def glft_skew_curve(
     -------
     np.ndarray — bid offset in ticks for each inventory level
     """
-    import sys, os
-    sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))
+    _ensure_repo_on_path()
 
     from baselines.glft import (
         build_ode_matrix, terminal_condition, solve_v, delta_bid
@@ -188,8 +196,7 @@ def collect_skew_data(
     -------
     (inventories, bid_offsets) : np.ndarray each shape (N_total_steps,)
     """
-    import sys
-    sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parents[1]))
+    _ensure_repo_on_path()
 
     from envs.lob_env import TICK_OFFSETS
     from training.train import get_encoder_input, decode_action

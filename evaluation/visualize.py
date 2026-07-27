@@ -25,14 +25,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
-
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from evaluation.metrics import load_train_history, load_eval_history, load_all_runs
+from evaluation.metrics import load_train_history, load_eval_history
 
 
 # ── Theme ─────────────────────────────────────────────────────────────────────

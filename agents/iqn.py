@@ -85,6 +85,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from agents.base import AgentBase
 from agents.recurrent_base import RecurrentBase
 from agents.qrdqn import QRDQNAgent  # reuse quantile_huber_loss
 from training.replay_buffer import ReplayBuffer
@@ -227,7 +228,7 @@ class IQNHead(nn.Module):
 
 # ── IQN agent ─────────────────────────────────────────────────────────────────
 
-class IQNAgent:
+class IQNAgent(AgentBase):
     """
     IQN agent with DRQN-LSTM backbone and CVaR action selection.
 

@@ -60,8 +60,10 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from encoders.base import BaseEncoder
 
-class CNNEncoder(nn.Module):
+
+class CNNEncoder(BaseEncoder):
     """
     Convolutional LOB encoder trained end-to-end with the RL agent.
 
@@ -126,30 +128,7 @@ class CNNEncoder(nn.Module):
         """
         return self._latent_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Encode a LOB depth snapshot to a latent vector.
-
-        Parameters
-        ----------
-        x : Tensor shape (B, input_dim) or (B, T, input_dim)
-            Raw LOB depth snapshot — ask_sizes[L1..LK] + bid_sizes[L1..LK].
-            Per-side normalised (each side sums to ~1).
-            NOT the handcrafted obs vector from _get_obs().
-
-        Returns
-        -------
-        Tensor shape (B, latent_dim) or (B, T, latent_dim)
-        """
-        # Handle sequence input (B, T, input_dim) — encode each step
-        if x.dim() == 3:
-            B, T, D = x.shape
-            z = self._encode(x.reshape(B * T, D))    # (B*T, latent_dim)
-            return z.reshape(B, T, self.latent_dim)
-
-        return self._encode(x.float())
-
-    def _encode(self, x: torch.Tensor) -> torch.Tensor:
+    def _encode_batch(self, x: torch.Tensor) -> torch.Tensor:
         """Single-step encoding: (B, input_dim) → (B, latent_dim)."""
         h = x.unsqueeze(1)           # (B, 1, input_dim)
         h = self.conv(h)             # (B, conv2_channels, input_dim)

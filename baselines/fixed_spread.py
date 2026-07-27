@@ -31,8 +31,8 @@ Week 3 deliverable.
 """
 
 import numpy as np
-from typing import Dict, Any, Optional
-from envs.lob_env import TICK_OFFSETS, N_OFFSET_LEVELS
+from typing import Dict, Any
+from envs.lob_env import N_OFFSET_LEVELS
 
 def _offset_to_idx(offset: int) -> int:
     """
@@ -40,7 +40,7 @@ def _offset_to_idx(offset: int) -> int:
 
     Parameters
     ----------
-    offset : int — tick offset in {+1, +2, ..., +10}
+    offset : int — tick offset in {0, 1, ..., 10}
 
     Returns
     -------
@@ -62,8 +62,8 @@ class FixedSpreadBaseline:
     Parameters
     ----------
     half_spread_ticks : int
-        Half-spread in ticks. Default 40 → total spread = 80 ticks = $0.80.
-        Must be in [1, 80] to stay within the action space.
+        Half-spread in ticks.
+        Must be in [1, N_OFFSET_LEVELS - 1] to stay within the action space.
     """
 
     name = "FixedSpread"
@@ -71,8 +71,8 @@ class FixedSpreadBaseline:
     def __init__(self, half_spread_ticks: int = 2
                  
                  ):
-        assert 1 <= half_spread_ticks <= 80, (
-            f"half_spread_ticks must be in [1, 80], got {half_spread_ticks}"
+        assert 1 <= half_spread_ticks <= N_OFFSET_LEVELS - 1, (
+            f"half_spread_ticks must be in [1, {N_OFFSET_LEVELS - 1}], got {half_spread_ticks}"
         )
 
         self.half_spread_ticks = half_spread_ticks

@@ -23,7 +23,12 @@ def fit_hawkes_mle(
 ) -> dict:
     from scipy.optimize import minimize
 
+    # Kept for API compatibility with existing scripts/configs
+    _ = (mu0, alpha0, beta0)
+
     times = np.sort(np.array(times, dtype=np.float64))
+    if len(times) < 2:
+        raise ValueError("Not enough events to fit Hawkes process (need at least 2)")
     times = times - times[0]          # shift to start at 0, in seconds
     T     = float(times[-1])
     n     = len(times)
@@ -229,7 +234,7 @@ def process_lobster_directory(
     # Find all message files
     message_files = sorted(Path(data_dir).glob(f"*_message_{n_levels}.csv"))
 
-    if len(message_files) == 0:
+    if not message_files:
         raise FileNotFoundError(
             f"No message files found in {data_dir} matching "
             f"*_message_{n_levels}.csv. "
@@ -286,6 +291,11 @@ def process_lobster_directory(
         # ── Collect message rows for agent parameter calibration ────────
         all_messages.append(msg)
 
+    if not all_snapshots or not all_messages:
+        raise FileNotFoundError(
+            "No valid message/orderbook pairs were processed."
+        )
+
     # ── Save LOB snapshots ──────────────────────────────────────────────
     snapshots_arr = np.vstack(all_snapshots)
     np.save(output_snapshots, snapshots_arr)
@@ -295,6 +305,8 @@ def process_lobster_directory(
 
     # ── Fit and save Hawkes parameters ──────────────────────────────────
     print("\nFitting Hawkes process via hawkeslib...")
+    if len(hawkes_times) < 2:
+        raise ValueError("Not enough events to fit Hawkes process (need at least 2)")
     hawkes_params = fit_hawkes_mle(np.array(sorted(hawkes_times)))
     with open(output_hawkes, "w") as f:
         json.dump(hawkes_params, f, indent=2)

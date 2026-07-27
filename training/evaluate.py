@@ -57,6 +57,7 @@ import numpy as np
 # ── Project path ──────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from agents.base import AgentBase
 from envs.lob_env import LOBMarketMakingEnv, N_OFFSET_LEVELS, TICK_OFFSETS
 from evaluation.metrics import episode_metrics, aggregate_episodes
 from evaluation.visualize import quote_skew_curve
@@ -294,7 +295,7 @@ def _eval_episode(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def evaluate_checkpoint(
-    agent:      Any,
+    agent:      AgentBase,
     env:        LOBMarketMakingEnv,
     enc_type:   str,
     n_episodes: int = 20,
@@ -329,7 +330,6 @@ def evaluate_checkpoint(
     all_inventories    = []
     all_bid_offsets    = []
     all_step_pnls      = []
-    all_cum_pnls       = []
 
     for ep in range(n_episodes):
         ep_data = _eval_episode(agent, env, enc_type, seed=seed + ep)
@@ -338,7 +338,6 @@ def evaluate_checkpoint(
         all_inventories.extend(ep_data["inventories"].tolist())
         all_bid_offsets.extend(ep_data["bid_offsets"].tolist())
         all_step_pnls.extend(ep_data["step_pnls"].tolist())
-        all_cum_pnls.extend(ep_data["cum_pnls"].tolist())
 
         if (ep + 1) % 5 == 0:
             print(f"  ep {ep+1}/{n_episodes} | "
@@ -557,5 +556,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import json
     main()

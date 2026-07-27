@@ -39,10 +39,11 @@ Week 5 deliverable.
 """
 
 import torch
-import torch.nn as nn
+
+from encoders.base import BaseEncoder
 
 
-class HandcraftedEncoder(nn.Module):
+class HandcraftedEncoder(BaseEncoder):
     """
     Identity encoder for the handcrafted LOB feature vector.
 
@@ -73,19 +74,8 @@ class HandcraftedEncoder(nn.Module):
         """
         return self.obs_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Pass observation through unchanged.
-
-        Parameters
-        ----------
-        x : Tensor shape (B, obs_dim) or (B, T, obs_dim)
-            Normalised observation from LOBMarketMakingEnv._get_obs().
-
-        Returns
-        -------
-        Tensor — same shape as input, dtype float32
-        """
+    def _encode_batch(self, x: torch.Tensor) -> torch.Tensor:
+        """Pass a 2D observation batch through unchanged"""
         return x.float()
 
     def __repr__(self) -> str:

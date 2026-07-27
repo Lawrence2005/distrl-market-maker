@@ -58,6 +58,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from encoders.base import BaseEncoder
+
 # Import LOBEncoder from pretrain_ae so the architecture definition
 # lives in exactly one place — no duplication.
 import sys
@@ -65,7 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from training.pretrain_ae import LOBEncoder
 
 
-class AEEncoder(nn.Module):
+class AEEncoder(BaseEncoder):
     """
     Frozen pre-trained LOB autoencoder encoder.
 
@@ -106,9 +108,9 @@ class AEEncoder(nn.Module):
         """Expected input dimension = 2 * n_levels."""
         return self._encoder.input_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _encode_batch(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Encode a LOB depth snapshot to a latent vector.
+        Encode a batch of LOB depth snapshots to latent vectors.
 
         Parameters
         ----------
@@ -120,12 +122,7 @@ class AEEncoder(nn.Module):
         -------
         Tensor shape (B, latent_dim) or (B, T, latent_dim)
         """
-        # Handle sequence input (B, T, input_dim) — encode each step
-        if x.dim() == 3:
-            B, T, D = x.shape
-            z = self._encoder(x.reshape(B * T, D))   # (B*T, latent_dim)
-            return z.reshape(B, T, self.latent_dim)
-        return self._encoder(x.float())
+        return self._encoder(x)
 
     def train(self, mode: bool = True) -> "AEEncoder":
         """

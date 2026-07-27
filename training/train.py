@@ -53,9 +53,7 @@ os.environ["OMP_NUM_THREADS"]       = "1"
 os.environ["MKL_NUM_THREADS"]       = "1"
 os.environ["OPENBLAS_NUM_THREADS"]  = "1"
 
-print("Importing torch...", flush=True)
 import torch
-print("Torch imported", flush=True)
 
 import json
 import time
@@ -71,6 +69,8 @@ from omegaconf import DictConfig, OmegaConf
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # ── Project import ───────────────────────────────────────────────────────────
+from agents.base import AgentBase
+from encoders.base import BaseEncoder
 from envs.lob_env import LOBMarketMakingEnv, N_OFFSET_LEVELS
 
 def decode_action(flat_action: int) -> np.ndarray:
@@ -79,8 +79,8 @@ def decode_action(flat_action: int) -> np.ndarray:
 
     flat_action = bid_idx * N_OFFSET_LEVELS + ask_idx
     """
-    return np.array([flat_action % N_OFFSET_LEVELS,
-                     flat_action // N_OFFSET_LEVELS], dtype=np.int64)
+    big_idx, ask_idx = divmod(flat_action, N_OFFSET_LEVELS)
+    return np.array([big_idx, ask_idx], dtype=np.int64)
 
 class _NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -96,7 +96,7 @@ class _NumpyEncoder(json.JSONEncoder):
 # Factory helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_encoder(enc_cfg: DictConfig) -> torch.nn.Module:
+def build_encoder(enc_cfg: DictConfig) -> BaseEncoder:
     """
     Instantiate encoder from config group encoder/.
 
@@ -130,13 +130,13 @@ def build_encoder(enc_cfg: DictConfig) -> torch.nn.Module:
 
 def build_agent(
     agent_cfg: DictConfig,
-    encoder:   torch.nn.Module,
+    encoder:   BaseEncoder,
     n_actions: int,
     alpha:     float,
     device:    str,
     enc_type:    str,
     seed:        int = 42,
-) -> Any:
+) -> AgentBase:
     """
     Instantiate agent from config group agent/.
 

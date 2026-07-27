@@ -74,6 +74,7 @@ from typing import Optional
 
 import numpy as np
 
+from agents.base import AgentBase
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Feature extraction helpers
@@ -198,7 +199,7 @@ class TileCoding:
 # SARSA(λ) agent
 # ══════════════════════════════════════════════════════════════════════════════
 
-class SARSAAgent:
+class SARSAAgent(AgentBase):
     """
     SARSA(λ) agent with tile coding and linear value function approximation.
 

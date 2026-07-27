@@ -87,6 +87,7 @@ from typing import Any, Optional
 import numpy as np
 import torch
 
+from agents.base import AgentBase
 from agents.qrdqn import QRDQNAgent
 from agents.iqn import IQNAgent
 
@@ -163,7 +164,7 @@ _RISK_MEASURES = {
 
 # ── CVaRPolicy wrapper ────────────────────────────────────────────────────────
 
-class CVaRPolicy:
+class CVaRPolicy(AgentBase):
     """
     Risk-sensitive policy wrapper for distributional RL agents.
 
@@ -328,6 +329,10 @@ class CVaRPolicy:
     # ------------------------------------------------------------------
     # Identity / logging
     # ------------------------------------------------------------------
+
+    @property
+    def epsilon(self) -> float:
+        return self._agent.epsilon
 
     @property
     def name(self) -> str:

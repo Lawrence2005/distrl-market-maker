@@ -49,11 +49,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from agents.base import AgentBase
 from agents.recurrent_base import RecurrentBase
 from training.replay_buffer import ReplayBuffer
 
 
-class DQNAgent:
+class DQNAgent(AgentBase):
     """
     Vanilla DQN agent with DRQN-LSTM backbone and dueling head.
 

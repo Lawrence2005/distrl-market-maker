@@ -241,9 +241,9 @@ class TestReward:
             bid_price=99.0, ask_price=101.0,
             inventory=5.0,
         )
-        # inventory_pnl = 5 * (100 - 101) = -5 → penalised only if negative
-        # asymmetric: pnl - max(0, eta * inv_pnl) = -5 - 0 = -5
-        assert reward == pytest.approx(-5.0, rel=1e-4)
+        # inventory_pnl = 5 * (100 - 101) = -5
+        # asymmetric: pnl - eta * max(0, -inventory_pnl) = -5 - 1.0 * 5 = -10
+        assert reward == pytest.approx(-10.0, rel=1e-4)
         env.close()
 
     def test_quadratic_penalises_inventory_level(self):
@@ -328,9 +328,9 @@ class TestActionSpace:
         env.close()
 
     def test_tick_offsets_range(self):
-        assert TICK_OFFSETS[0]  == 1
+        assert TICK_OFFSETS[0]  == 0
         assert TICK_OFFSETS[-1] ==  10
-        assert N_OFFSET_LEVELS  ==  10
+        assert N_OFFSET_LEVELS  ==  11
 
     def test_all_actions_valid(self):
         env = LOBMarketMakingEnv(seed=0)

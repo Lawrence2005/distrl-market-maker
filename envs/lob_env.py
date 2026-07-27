@@ -13,19 +13,44 @@ import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
 from typing import Optional, Tuple, Dict, Any
+import warnings
 import yaml
 
-from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
+try:
+    from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
+except ImportError:
+    SubGymMarketsExecutionEnv_v0 = None
 
 # Action space: bid/ask offsets in ticks
-# δ ∈ {−10, −9, ..., 0, +1, ..., +10} → 11 levels per side → 121 total
-TICK_OFFSETS = np.arange(0, 11)   # shape (11,)
-N_OFFSET_LEVELS = len(TICK_OFFSETS) # = 11
+# δ ∈ {0, 1, ..., 10} → 11 levels per side → 121 total
+TICK_OFFSETS = np.arange(0, 11, dtype=np.int64)
+N_OFFSET_LEVELS = len(TICK_OFFSETS)
 
 # Rolling-history window caps (avoid unbounded memory growth)
 _PRICE_HISTORY_MAXLEN  = 500
 _VOLUME_HISTORY_MAXLEN = 500
 _LOB_HISTORY_MAXLEN    = 100
+_ABIDES_FALLBACK_WARNED = False
+
+
+def build_abides_env(use_abides: bool):
+    """Creates ABIDES env when available, else fall back to synthetic mode"""
+    global _ABIDES_FALLBACK_WARNED
+
+    if not use_abides:
+        return None
+
+    if SubGymMarketsExecutionEnv_v0 is None:
+        if not _ABIDES_FALLBACK_WARNED:
+            warnings.warn(
+                "ABIDES-Gym not installed; falling back to synthetic GBM mid-price "
+                "and zero fills. Install abides-gym to enable real LOB simulation.",
+                RuntimeWarning,
+            )
+            _ABIDES_FALLBACK_WARNED = True
+        return None
+
+    return AbidesMarketMakingEnv(background_config="rmsc04")
 
 class LOBMarketMakingEnv(gym.Env):
     """
@@ -87,10 +112,7 @@ class LOBMarketMakingEnv(gym.Env):
     ):
         super().__init__()
 
-        if use_abides:
-            self._abides_env = AbidesMarketMakingEnv(background_config="rmsc04")
-        else:
-            self._abides_env = None
+        self._abides_env = build_abides_env(use_abides)
 
         cfg = {}
         if config is not None:
@@ -121,7 +143,7 @@ class LOBMarketMakingEnv(gym.Env):
         self._drift = 0.0   # per-step log drift for trending regime
         self._sigma_override = None  # optional vol override
 
-        # ── Action space: two 9-dim heads (MultiDiscrete) ─────────────
+        # ── Action space: bid/ask offset indices ─────────────
         self.action_space = spaces.MultiDiscrete([N_OFFSET_LEVELS, N_OFFSET_LEVELS])
 
         # ── Observation space ─────────────────────────────────────────
@@ -424,8 +446,8 @@ class LOBMarketMakingEnv(gym.Env):
 
         if self.reward_type == "asymmetric":
             # Penalise adverse (negative) inventory PnL only.
-            # When eta=0 → pure PnL; when eta=1 → fully hedge inventory risk.
-            return pnl - max(0.0, self.eta * inventory_pnl)
+            # inv_pnl < 0 means inventory is working against us.
+            return pnl - self.eta * max(0.0, -inventory_pnl)
 
         if self.reward_type == "quadratic":
             # Symmetric quadratic inventory penalty at every step.
@@ -494,13 +516,11 @@ class LOBMarketMakingEnv(gym.Env):
             parsed = self._parse_abides_step(raw_state)
             if parsed["lob_snapshot"]["bid_sizes"]:
                 self._lob_history.append(parsed["lob_snapshot"])
-            cash = parsed["cash"]
         else:
             # ── Synthetic GBM fallback ────────────────────────────────────
             self._mid_price = 100.0
             self._prev_mid  = self._mid_price
             self._price_history.append(self._mid_price)
-            cash = 0.0
 
         obs  = self._get_obs()
         info = {
@@ -755,30 +775,39 @@ class LOBMarketMakingEnv(gym.Env):
             "holdings":      internal.get("holdings", 0),
         }
 
-class AbidesMarketMakingEnv(SubGymMarketsExecutionEnv_v0):
-    """Thin subclass that overrides action mapping for two-sided LMT quoting."""
+if SubGymMarketsExecutionEnv_v0 is None:
+    class AbidesMarketMakingEnv:
+        """Dummy placeholder when ABIDES is not installed."""
+        def __init__(self, **kwargs):
+            raise ImportError(
+                "ABIDES is not installed. Please install it to use "
+                "AbidesMarketMakingEnv."
+            )
+else:
+    class AbidesMarketMakingEnv(SubGymMarketsExecutionEnv_v0):
+        """Thin subclass that overrides action mapping for two-sided LMT quoting."""
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Single dummy action token — we only ever pass 0
-        self.action_space = gym.spaces.Discrete(1)
-        self._pending_bid_price: int = 0  # cents
-        self._pending_ask_price: int = 0  # cents
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            # Single dummy action token — we only ever pass 0
+            self.action_space = gym.spaces.Discrete(1)
+            self._pending_bid_price: int = 0  # cents
+            self._pending_ask_price: int = 0  # cents
 
-        # ABIDES declares tight bounds on its own obs space but background agents regularly push features (holdings_pct, time_pct, etc.) outside them. Widen to float32 max to suppress the internal contains() assert.
-        n = self.observation_space.shape[0]
-        self.observation_space = gym.spaces.Box(
-            low  = -np.finfo(np.float32).max,
-            high =  np.finfo(np.float32).max,
-            shape = self.observation_space.shape,
-            dtype = np.float32,
-        )
+            # ABIDES declares tight bounds on its own obs space but background agents regularly push features (holdings_pct, time_pct, etc.) outside them. Widen to float32 max to suppress the internal contains() assert.
+            n = self.observation_space.shape[0]
+            self.observation_space = gym.spaces.Box(
+                low  = -np.finfo(np.float32).max,
+                high =  np.finfo(np.float32).max,
+                shape = self.observation_space.shape,
+                dtype = np.float32,
+            )
 
-    def _map_action_space_to_ABIDES_SIMULATOR_SPACE(self, action: int):
-        return [
-            {"type": "CCL_ALL"},
-            {"type": "LMT", "direction": "BUY",  "size": 1,
-             "limit_price": self._pending_bid_price},
-            {"type": "LMT", "direction": "SELL", "size": 1,
-             "limit_price": self._pending_ask_price},
-        ]
+        def _map_action_space_to_ABIDES_SIMULATOR_SPACE(self, action: int):
+            return [
+                {"type": "CCL_ALL"},
+                {"type": "LMT", "direction": "BUY",  "size": 1,
+                "limit_price": self._pending_bid_price},
+                {"type": "LMT", "direction": "SELL", "size": 1,
+                "limit_price": self._pending_ask_price},
+            ]
