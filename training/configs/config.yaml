@@ -30,9 +30,11 @@ seed: 42
 # Passed as alpha=0.10 on CLI
 alpha: 0.25
 
-# Whether to add LSTM recurrent layer on top of encoder
-# Set via variant=recurrent on CLI
-variant: null   # null = no recurrent layer (snapshot agent)
+# NOTE: `variant` is NOT declared here. It comes from the `optional variant`
+# config group above (null by default, populated from configs/variant/<name>.yaml
+# when variant=<name> is passed on the CLI). Declaring `variant: null` in this
+# _self_ block would silently clobber the group-selected value, since _self_ is
+# merged last in the defaults list — do not re-add it.
 
 # ── Training schedule ─────────────────────────────────────────────────
 training:

@@ -93,6 +93,7 @@ class DQNAgent(AgentBase):
         epsilon_decay_steps: int   = 50_000,
         buffer_capacity:     int   = 100_000,
         prioritized:         bool  = False,
+        use_lstm:            bool  = True,
         device:              str   = "cpu",
     ):
         self.n_actions          = n_actions
@@ -113,6 +114,7 @@ class DQNAgent(AgentBase):
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = True,
+            use_lstm   = use_lstm,
         ).to(self.device)
 
         # Target network: same architecture, weights updated periodically
@@ -121,6 +123,7 @@ class DQNAgent(AgentBase):
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = True,
+            use_lstm   = use_lstm,
         ).to(self.device)
         self.target.load_state_dict(self.online.state_dict())
 

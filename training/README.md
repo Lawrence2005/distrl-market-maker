@@ -1,8 +1,12 @@
 # training/ — Training Scripts and Configs
 
 ## Files
-- `train.py`           — Main training entry point (all agents)
+- `train.py`           — Hydra entry point: episode loop, logging, checkpointing schedule
+- `factory.py`         — Builds encoder/agent/env/policy-wrapper from Hydra config groups
+- `rollout.py`         — Single-episode execution, episode metrics, checkpoint save/load
+- `replay_buffer.py`   — Sequence replay buffer shared by the DRQN-style agents
 - `pretrain_ae.py`     — Autoencoder pre-training on LOBSTER data (offline)
+- `evaluate.py`        — Loads a checkpoint and runs evaluation rollouts
 - `configs/`           — Hydra YAML configs (one per experiment)
 
 ## Usage

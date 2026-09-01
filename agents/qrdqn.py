@@ -110,7 +110,6 @@ class QuantileHead(nn.Module):
         dueling:     bool = True,
     ):
         super().__init__()
-        print(f"QuantileHead init: input={input_dim} actions={n_actions} quantiles={n_quantiles}", flush=True)
 
         self.n_actions   = n_actions
         self.n_quantiles = n_quantiles
@@ -136,7 +135,6 @@ class QuantileHead(nn.Module):
                 nn.ReLU(),
                 nn.Linear(mid, n_actions * n_quantiles),
             )
-        print("QuantileHead streams created", flush=True)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         """
@@ -212,6 +210,7 @@ class QRDQNAgent(AgentBase):
         epsilon_decay_steps: int   = 50_000,
         buffer_capacity:     int   = 100_000,
         prioritized:         bool  = True,
+        use_lstm:            bool  = True,
         device:              str   = "cpu",
     ):
         self.n_actions           = n_actions
@@ -239,14 +238,13 @@ class QRDQNAgent(AgentBase):
 
         # ── Networks ──────────────────────────────────────────────────
         # RecurrentBase with dueling=False — we add our own quantile head
-        print("Creating network...", flush=True)
         self.online_base = RecurrentBase(
             encoder    = encoder,
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = False,   # head added separately below
+            use_lstm   = use_lstm,
         ).to(self.device)
-        print("online_base created", flush=True)
 
         self.online_head = QuantileHead(
             input_dim   = hidden_dim,
@@ -254,17 +252,15 @@ class QRDQNAgent(AgentBase):
             n_quantiles = n_quantiles,
             dueling     = dueling,
         ).to(self.device)
-        print("online_head created", flush=True)
 
-        
         self.target_base = RecurrentBase(
             encoder    = copy.deepcopy(encoder),
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = False,
+            use_lstm   = use_lstm,
         ).to(self.device)
         self.target_base.load_state_dict(self.online_base.state_dict())
-        print("target_base created", flush=True)
 
         self.target_head = QuantileHead(
             input_dim   = hidden_dim,
@@ -273,7 +269,6 @@ class QRDQNAgent(AgentBase):
             dueling     = dueling,
         ).to(self.device)
         self.target_head.load_state_dict(self.online_head.state_dict())
-        print("Networks created", flush=True)
 
         self.target_base.eval()
         self.target_head.eval()

@@ -26,7 +26,17 @@ data/lobster/
 *.pt
 *.pth
 *.pkl
-checkpoints/
+checkpoints/*
+# Exception: small pretrained encoder inputs required by encoder=autoencoder
+# runs (not training-run outputs) — must ship with the repo.
+!checkpoints/ae_encoder_*.pt
+!checkpoints/ae_history_*.json
+
+# Training logs and Hydra run directories (regenerated per run, not tracked)
+logs/
+outputs/
+multirun/
+.pytest_cache/
 
 # Experiment outputs (tracked via W&B, not git)
 experiments/results/runs/

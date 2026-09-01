@@ -277,6 +277,7 @@ class IQNAgent(AgentBase):
         epsilon_decay_steps: int   = 50_000,
         buffer_capacity:     int   = 100_000,
         prioritized:         bool  = True,
+        use_lstm:            bool  = True,
         device:              str   = "cpu",
     ):
         self.n_actions           = n_actions
@@ -303,6 +304,7 @@ class IQNAgent(AgentBase):
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = False,
+            use_lstm   = use_lstm,
         ).to(self.device)
 
         self.online_head = IQNHead(
@@ -317,6 +319,7 @@ class IQNAgent(AgentBase):
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
             dueling    = False,
+            use_lstm   = use_lstm,
         ).to(self.device)
         self.target_base.load_state_dict(self.online_base.state_dict())
 

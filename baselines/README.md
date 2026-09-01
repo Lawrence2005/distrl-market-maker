@@ -7,7 +7,6 @@ Lineage: Fixed Spread → AS (2008) → GLFT (2012).
 - `fixed_spread.py`  — Symmetric fixed-spread, no inventory adjustment
 - `avellaneda_stoikov.py` — AS (2008) closed-form
 - `glft.py`          — GLFT (2012): FOIC and LIIC variants
-- `utils.py`         — Shared helpers (reservation price, spread calcs)
 
 ## Usage
 ```python

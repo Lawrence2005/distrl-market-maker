@@ -114,6 +114,7 @@ class ActorCriticNet(nn.Module):
         n_actions:  int,
         hidden_dim: int = 128,
         num_layers: int = 1,
+        use_lstm:   bool = True,
     ):
         super().__init__()
 
@@ -121,14 +122,21 @@ class ActorCriticNet(nn.Module):
         self.n_actions  = n_actions
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
+        self.use_lstm   = use_lstm
 
-        # Shared LSTM backbone
-        self.lstm = nn.LSTM(
-            input_size  = encoder.latent_dim,
-            hidden_size = hidden_dim,
-            num_layers  = num_layers,
-            batch_first = True,
-        )
+        if use_lstm:
+            # Shared LSTM backbone
+            self.lstm = nn.LSTM(
+                input_size  = encoder.latent_dim,
+                hidden_size = hidden_dim,
+                num_layers  = num_layers,
+                batch_first = True,
+            )
+            self.proj = None
+        else:
+            # Snapshot mode: no temporal memory
+            self.lstm = None
+            self.proj = nn.Linear(encoder.latent_dim, hidden_dim)
 
         mid = max(hidden_dim // 2, n_actions)
 
@@ -155,6 +163,9 @@ class ActorCriticNet(nn.Module):
         device: Optional[torch.device] = None,
     ) -> None:
         """Reset LSTM hidden state to zeros. Call at episode start."""
+        if not self.use_lstm:
+            self._hidden = None
+            return
         if device is None:
             device = next(self.lstm.parameters()).device
         zeros = torch.zeros(self.num_layers, batch_size, self.hidden_dim,
@@ -189,15 +200,21 @@ class ActorCriticNet(nn.Module):
         # Encode: (B, T, input_dim) → (B, T, latent_dim)
         z = self.encoder(x)
 
-        if hidden is None:
-            hidden = self._hidden
-        if hidden is None:
-            self.reset_hidden(batch_size=x.size(0), device=x.device)
-            hidden = self._hidden
+        if self.use_lstm:
+            if hidden is None:
+                hidden = self._hidden
+            if hidden is None:
+                self.reset_hidden(batch_size=x.size(0), device=x.device)
+                hidden = self._hidden
 
-        # LSTM: (B, T, latent_dim) → (B, T, hidden_dim)
-        lstm_out, new_hidden = self.lstm(z, hidden)
-        self._hidden = new_hidden
+            # LSTM: (B, T, latent_dim) → (B, T, hidden_dim)
+            lstm_out, new_hidden = self.lstm(z, hidden)
+            self._hidden = new_hidden
+        else:
+            # Snapshot mode: per-timestep projection, no temporal memory
+            lstm_out   = self.proj(z)
+            new_hidden = None
+            self._hidden = None
 
         B, T, H = lstm_out.shape
         h_flat = lstm_out.reshape(B * T, H)
@@ -315,6 +332,7 @@ class PPOAgent(AgentBase):
         value_coef:     float = 0.5,
         lr:             float = 3e-4,
         max_grad_norm:  float = 0.5,
+        use_lstm:       bool  = True,
         device:         str   = "cpu",
     ):
         self.n_actions      = n_actions
@@ -334,6 +352,7 @@ class PPOAgent(AgentBase):
             encoder    = encoder,
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
+            use_lstm   = use_lstm,
         ).to(self.device)
 
         self.optimiser = torch.optim.Adam(

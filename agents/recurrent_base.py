@@ -137,6 +137,11 @@ class RecurrentBase(nn.Module):
     dueling    : bool      — use dueling head (default True)
                              set False to output raw LSTM hidden state
                              (for subclasses that add their own head)
+    use_lstm   : bool      — snapshot vs. recurrent ablation switch (default True)
+                             True  → Encoder -> LSTM -> head (temporal memory)
+                             False → Encoder -> Linear -> head, applied per
+                             timestep independently (no hidden state carried
+                             across steps) — the "snapshot" variant
     """
 
     def __init__(
@@ -147,6 +152,7 @@ class RecurrentBase(nn.Module):
         num_layers: int   = 1,
         dropout:    float = 0.0,
         dueling:    bool  = True,
+        use_lstm:   bool  = True,
     ):
         super().__init__()
 
@@ -155,15 +161,23 @@ class RecurrentBase(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self._dueling   = dueling
+        self.use_lstm   = use_lstm
 
-        # LSTM: takes latent_z sequence, outputs hidden state sequence
-        self.lstm = nn.LSTM(
-            input_size  = encoder.latent_dim,
-            hidden_size = hidden_dim,
-            num_layers  = num_layers,
-            batch_first = True,         # input shape: (B, T, latent_dim)
-            dropout     = dropout if num_layers > 1 else 0.0,
-        )
+        if use_lstm:
+            # LSTM: takes latent_z sequence, outputs hidden state sequence
+            self.lstm = nn.LSTM(
+                input_size  = encoder.latent_dim,
+                hidden_size = hidden_dim,
+                num_layers  = num_layers,
+                batch_first = True,         # input shape: (B, T, latent_dim)
+                dropout     = dropout if num_layers > 1 else 0.0,
+            )
+            self.proj = None
+        else:
+            # Snapshot mode: no temporal memory — per-timestep linear
+            # projection replaces the LSTM entirely.
+            self.lstm = None
+            self.proj = nn.Linear(encoder.latent_dim, hidden_dim)
 
         # Dueling head on top of LSTM hidden state
         if dueling:
@@ -190,6 +204,9 @@ class RecurrentBase(nn.Module):
         batch_size : int           — B (default 1 for inference)
         device     : torch.device  — if None, infers from LSTM parameters
         """
+        if not self.use_lstm:
+            self._hidden = None
+            return
         if device is None:
             device = next(self.lstm.parameters()).device
         zeros = torch.zeros(
@@ -247,18 +264,24 @@ class RecurrentBase(nn.Module):
         # Encode sequence: (B, T, input_dim) → (B, T, latent_dim)
         z = self.encoder(x)
 
-        # Initialise hidden state if needed
-        if hidden is None:
-            hidden = self._hidden
-        if hidden is None:
-            self.reset_hidden(batch_size=x.size(0), device=x.device)
-            hidden = self._hidden
+        if self.use_lstm:
+            # Initialise hidden state if needed
+            if hidden is None:
+                hidden = self._hidden
+            if hidden is None:
+                self.reset_hidden(batch_size=x.size(0), device=x.device)
+                hidden = self._hidden
 
-        # LSTM: (B, T, latent_dim) → (B, T, hidden_dim)
-        lstm_out, new_hidden = self.lstm(z, hidden)
+            # LSTM: (B, T, latent_dim) → (B, T, hidden_dim)
+            lstm_out, new_hidden = self.lstm(z, hidden)
 
-        # Update stored hidden state
-        self._hidden = new_hidden
+            # Update stored hidden state
+            self._hidden = new_hidden
+        else:
+            # Snapshot mode: per-timestep projection, no temporal memory
+            lstm_out   = self.proj(z)   # (B, T, hidden_dim)
+            new_hidden = None
+            self._hidden = None
 
         # Dueling head over all timesteps
         if self._dueling and self.head is not None:
@@ -300,20 +323,27 @@ class RecurrentBase(nn.Module):
     def count_parameters(self) -> dict[str, int]:
         """Parameter counts by component — useful for ablation reporting."""
         def n(module): return sum(p.numel() for p in module.parameters())
+        temporal = self.lstm if self.use_lstm else self.proj
         return {
             "encoder":  n(self.encoder),
-            "lstm":     n(self.lstm),
+            "lstm":     n(temporal),
             "head":     n(self.head) if self.head is not None else 0,
             "total":    n(self),
         }
 
     def __repr__(self) -> str:
         counts = self.count_parameters()
+        temporal_repr = (
+            f"LSTM(input={self.encoder.latent_dim}, "
+            f"hidden={self.hidden_dim}, layers={self.num_layers})"
+            if self.use_lstm else
+            f"Linear(input={self.encoder.latent_dim}, hidden={self.hidden_dim})  "
+            f"# snapshot — no temporal memory"
+        )
         return (
             f"RecurrentBase(\n"
             f"  encoder={self.encoder},\n"
-            f"  lstm=LSTM(input={self.encoder.latent_dim}, "
-            f"hidden={self.hidden_dim}, layers={self.num_layers}),\n"
+            f"  temporal={temporal_repr},\n"
             f"  head={'DuelingHead' if self._dueling else 'None (subclass)'},\n"
             f"  n_actions={self.n_actions},\n"
             f"  params: encoder={counts['encoder']:,} "
