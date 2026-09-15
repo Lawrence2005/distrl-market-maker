@@ -9,3 +9,12 @@ replay_buffer_size: 100000
 epsilon_start: 1.0
 epsilon_end: 0.05
 epsilon_decay_steps: 50000
+
+# Huber-loss threshold on the TD error. The old default (1.0) was never
+# rescaled when env/base.yaml's order_size went 1->100 shares — TD errors
+# scale ~linearly with order_size (same as rewards/Q-values), so with the
+# threshold left at 1.0 the loss spent virtually all of training in Huber's
+# linear tail rather than its intended quadratic-near-zero regime. Rescaled
+# by the same 100x factor used for the quadratic reward's lam (see
+# reward/quadratic.yaml) to restore the originally-tuned loss shape.
+huber_beta: 100.0

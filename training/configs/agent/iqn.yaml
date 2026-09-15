@@ -13,3 +13,8 @@ target_update_freq: 1000
 epsilon_start: 1.0
 epsilon_end: 0.05
 epsilon_decay_steps: 50000
+
+# Quantile-Huber loss threshold on the TD error — see dqn.yaml's huber_beta
+# comment for why this needed rescaling from its old default (1.0) after
+# env/base.yaml's order_size went 1->100 shares.
+kappa: 100.0

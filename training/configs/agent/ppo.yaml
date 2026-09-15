@@ -9,6 +9,14 @@ delta_target:   0.01
 k_epochs:       4
 minibatch_size: 64
 entropy_coef:   0.01
-value_coef:     0.5
+# Value loss uses plain MSE (not Huber), so it scales *quadratically* with
+# returns/advantages while the policy loss scales linearly — and the two
+# share a backbone (ActorCriticNet), so an imbalance here bleeds into the
+# policy's own representation. Rewards grew ~100x when env/base.yaml's
+# order_size went 1->100 shares, so MSE(returns) grew ~100x more than that
+# relative to the (linear) policy loss; value_coef rescaled by the same
+# 100x factor (down, since MSE overweights this term) to restore the
+# originally-tuned policy/value loss balance.
+value_coef:     0.005
 lr:             0.0003
 max_grad_norm:  0.5

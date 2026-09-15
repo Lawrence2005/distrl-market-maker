@@ -124,7 +124,10 @@ def build_agent(
 
     if agent_type == "dqn":
         from agents.dqn import DQNAgent
-        return DQNAgent(**common)
+        return DQNAgent(
+            **common,
+            huber_beta = agent_cfg.get("huber_beta", 1.0),
+        )
 
     if agent_type == "qrdqn":
         from agents.qrdqn import QRDQNAgent
@@ -133,6 +136,7 @@ def build_agent(
             n_quantiles = agent_cfg.get("n_quantiles", 200),
             dueling     = agent_cfg.get("dueling", True),
             cvar_alpha  = alpha,
+            kappa       = agent_cfg.get("kappa", 1.0),
         )
 
     if agent_type == "iqn":
@@ -143,6 +147,7 @@ def build_agent(
             embedding_dim      = agent_cfg.get("embedding_dim", 64),
             dueling            = agent_cfg.get("dueling", True),
             cvar_alpha         = alpha,
+            kappa              = agent_cfg.get("kappa", 1.0),
         )
 
     if agent_type == "ppo":

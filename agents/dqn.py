@@ -94,6 +94,7 @@ class DQNAgent(AgentBase):
         buffer_capacity:     int   = 100_000,
         prioritized:         bool  = False,
         use_lstm:            bool  = True,
+        huber_beta:          float = 1.0,
         device:              str   = "cpu",
     ):
         self.n_actions          = n_actions
@@ -104,6 +105,7 @@ class DQNAgent(AgentBase):
         self.epsilon_start      = epsilon_start
         self.epsilon_end        = epsilon_end
         self.epsilon_decay_steps = epsilon_decay_steps
+        self.huber_beta         = huber_beta
         self.device             = torch.device(device)
 
         self.is_online = False
@@ -265,7 +267,7 @@ class DQNAgent(AgentBase):
 
         # ── Huber loss (IS-weighted for PER) ──────────────────────────
         td_errors   = (q_sa - target).abs().detach().cpu().numpy()
-        element_loss = F.smooth_l1_loss(q_sa, target, reduction="none")
+        element_loss = F.smooth_l1_loss(q_sa, target, reduction="none", beta=self.huber_beta)
         loss         = (is_w * element_loss).mean()
 
         # ── Gradient update ───────────────────────────────────────────
