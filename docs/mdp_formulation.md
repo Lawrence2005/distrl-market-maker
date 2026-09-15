@@ -74,7 +74,7 @@ Input:  sequence of T=30 LOB snapshots, shape (T, input_dim)
 LSTM(input_size=input_dim, hidden_size=128, num_layers=1, batch_first=True)
 Output: hidden state h_t, shape (128,) — feeds directly into Q-head or policy head
 ```
-The LSTM hidden state (h_t, c_t) is carried forward across timesteps within an episode and reset to zero at episode start. This gives the agent explicit temporal memory — it can learn to detect Hawkes-process order flow clustering, price momentum, and regime shifts from the history of LOB observations, rather than treating each timestep as independent. This variant requires a sequence replay buffer that stores T-step sequences of raw LOB observations; the LSTM hidden state is recomputed from the raw sequence during each training update to avoid stale-state bias from old network weights.
+The LSTM hidden state (h_t, c_t) is carried forward across timesteps within an episode and reset to zero at episode start. This gives the agent explicit temporal memory — it can learn to detect order flow clustering, price momentum, and regime shifts from the history of LOB observations, rather than treating each timestep as independent. This variant requires a sequence replay buffer that stores T-step sequences of raw LOB observations; the LSTM hidden state is recomputed from the raw sequence during each training update to avoid stale-state bias from old network weights.
 
 Shared backbone in `agents/recurrent_base.py`; instantiated separately as DRQN, RecurrentQRDQN, RecurrentIQN, RecurrentPPO. Primary citations: Sun et al. (2022); Hausknecht & Stone (2015).
 
@@ -182,9 +182,7 @@ Length:        3900 steps (one trading day)
 Inventory:     |q_t| ≤ Q_max = 1000 shares (order_size = 100 shares/order, ~10 orders' worth)
 Background:    50 noise traders, 10 momentum, 5 informed
 
-Arrivals: Hawkes — λ(t) = μ + Σ_j α·exp(−β·(t−t_j))
-Primary citation:    Bacry, Mastromatteo & Muzy (2015)
-Empirical motivation: Huang et al. (2015)
+Arrivals: ABIDES rmsc04's own background-agent order flow (unmodified)
 ```
 
 ---
@@ -211,9 +209,9 @@ RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kos
 
 | Regime | σ | Arrivals | Drift | Informed % | Primary test |
 |--------|---|----------|-------|------------|--------------|
-| Low-Vol | σ_low≈0.5bps | Poisson | 0 | 5% | GLFT recovery; SARSA>Q-learning |
-| High-Vol | σ_high≈2.0bps | Hawkes | 0 | 10% | CVaR advantage; recurrent>snapshot |
-| OOD Transfer | σ_high (trained σ_low) | Hawkes | 0 | 10% | Recurrent IQN vs. snapshot QR-DQN degradation |
+| Low-Vol | σ_low≈0.5bps | rmsc04 default | 0 | 5% | GLFT recovery; SARSA>Q-learning |
+| High-Vol | σ_high≈2.0bps | rmsc04 default | 0 | 10% | CVaR advantage; recurrent>snapshot |
+| OOD Transfer | σ_high (trained σ_low) | rmsc04 default | 0 | 10% | Recurrent IQN vs. snapshot QR-DQN degradation |
 
 (Trending and Flash Crash regimes were removed from the project — see git
 history. Trending had no real drift mechanism under real ABIDES (rmsc04's
@@ -236,8 +234,7 @@ megashock mechanism proved numerically unstable during calibration.)
 |----------|------|
 | Avellaneda & Stoikov (2008) | AS baseline |
 | Guéant et al. (2012) | GLFT baseline — FOIC/LIIC |
-| Huang et al. (2015) | Queue imbalance feature; Hawkes motivation |
-| Bacry et al. (2015) | Hawkes process model and calibration |
+| Huang et al. (2015) | Queue imbalance feature |
 | Spooner et al. (2018) | State features; asymmetric reward η; SARSA>Q-learning |
 | Beysolow II | RL motivation |
 | Ganesh et al. JPMorgan (2019) | Risk-Averse |

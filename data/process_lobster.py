@@ -4,7 +4,6 @@ LOBSTER data processing script.
 Reads raw LOBSTER message + orderbook files.
 Outputs:
   - LOB snapshot tensors for AE pre-training
-  - Background agent calibration parameters (hawkes_params.json)
   - Background agent parameters (agent_params.json)
   - Stylized facts summary for simulator validation
 
@@ -14,116 +13,6 @@ import pandas as pd
 import numpy as np
 import json
 from pathlib import Path
-
-def fit_hawkes_mle(
-    times: np.ndarray,
-    mu0: float = 0.5,
-    alpha0: float = 0.3,
-    beta0: float = 1.0,
-) -> dict:
-    from scipy.optimize import minimize
-
-    # Kept for API compatibility with existing scripts/configs
-    _ = (mu0, alpha0, beta0)
-
-    times = np.sort(np.array(times, dtype=np.float64))
-    if len(times) < 2:
-        raise ValueError("Not enough events to fit Hawkes process (need at least 2)")
-    times = times - times[0]          # shift to start at 0, in seconds
-    T     = float(times[-1])
-    n     = len(times)
-
-    # ── Rescale to minutes for numerical stability ─────────────────────
-    SCALE    = 60.0
-    ts       = times / SCALE
-    T_fit    = T / SCALE
-
-    # ── Vectorised log-likelihood (no Python loop — handles full dataset) ──
-    def nll(params):
-        mu, alpha, beta = params
-        if mu <= 0 or alpha <= 0 or beta <= 0 or alpha / beta >= 0.99:
-            return 1e10
-
-        # Compute A[i] = sum_{j<i} exp(-beta*(ts[i]-ts[j])) vectorised
-        # A[i] via recurrence: A[i] = exp(-beta*dt) * (1 + A[i-1])
-        dts = np.diff(ts)                          # shape (n-1,)
-        decay = np.exp(-beta * dts)                # shape (n-1,)
-
-        A = np.zeros(n)
-        for i in range(1, n):
-            A[i] = decay[i-1] * (1.0 + A[i-1])
-
-        # Log-likelihood
-        lam = mu + alpha * A                       # intensity at each event
-        t1  = -mu * T_fit
-        t2  = -(alpha / beta) * np.sum(1.0 - np.exp(-beta * (T_fit - ts)))
-        t3  = np.sum(np.log(np.maximum(lam, 1e-300)))
-        return -(t1 + t2 + t3)
-
-    # ── Starting points informed by data ──────────────────────────────
-    # Empirical rate in events/min
-    emp_rate = n / T_fit
-
-    # Expected: mu/(1-rho) = emp_rate, so mu ≈ emp_rate * (1 - rho_guess)
-    # Try a range of rho guesses
-    starting_points = []
-    for rho_guess in [0.3, 0.4, 0.5, 0.2, 0.6]:
-        mu_guess   = emp_rate * (1 - rho_guess)
-        # beta in minutes: decay ~1-5 sec → beta_min = 60/decay_sec
-        for decay_sec in [1.0, 2.0, 5.0, 0.5]:
-            beta_guess  = SCALE / decay_sec
-            alpha_guess = rho_guess * beta_guess
-            starting_points.append([mu_guess, alpha_guess, beta_guess])
-
-    best, best_val = None, np.inf
-    for x0 in starting_points:
-        try:
-            r = minimize(
-                nll, x0=x0,
-                method="L-BFGS-B",
-                bounds=[
-                    (emp_rate * 0.01, emp_rate * 2.0),   # mu near empirical rate
-                    (1e-3,   0.98 * x0[2]),              # alpha < beta (stationarity)
-                    (1.0,    SCALE * 100),               # beta: decay faster than 1 min
-                ],
-                options={"maxiter": 3000, "ftol": 1e-15, "gtol": 1e-9},
-            )
-            if r.success and r.fun < best_val:
-                best_val = r.fun
-                best = r
-        except Exception:
-            continue
-
-    if best is None:
-        # Fallback: return moment-matched parameters
-        print("  WARNING: MLE failed. Using moment-matched parameters.")
-        mu_hat    = float(emp_rate / SCALE * 0.7)
-        beta_hat  = 1.5
-        alpha_hat = 0.4 * beta_hat
-    else:
-        mu_min, alpha_hat, beta_min = best.x
-        mu_hat   = mu_min  / SCALE
-        alpha_hat = alpha_hat / SCALE
-        beta_hat = beta_min / SCALE
-
-        # Clip to ensure stationarity
-        if alpha_hat / beta_hat >= 1.0:
-            alpha_hat       = 0.90 * beta_hat
-    branching_ratio = alpha_hat / beta_hat
-
-    print(f"  Hawkes MLE converged: {best is not None and best.success}")
-    print(f"  mu={mu_hat:.6f}/sec, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}/sec")
-    print(f"  Branching ratio rho = {branching_ratio:.4f}")
-
-    return {
-        "mu":              float(mu_hat),
-        "alpha":           float(alpha_hat),
-        "beta":            float(beta_hat),
-        "branching_ratio": float(branching_ratio),
-        "n_events":        int(n),
-        "T_seconds":       float(T),
-        "converged":       bool(best is not None),
-    }
 
 def compute_agent_params(all_messages: pd.DataFrame) -> dict:
     """
@@ -216,9 +105,8 @@ def process_lobster_directory(
     data_dir:         str,
     n_levels:         int = 10,
     output_snapshots: str = "data/processed/lob_snapshots.npy",
-    output_hawkes:    str = "data/calibration/hawkes_params.json",
     output_agents:    str = "data/calibration/agent_params.json",
-) -> tuple[np.ndarray, dict, dict]:
+) -> tuple[np.ndarray, dict]:
     """
     Reads all message + orderbook CSV pairs in data_dir.
     Works identically on:
@@ -228,7 +116,6 @@ def process_lobster_directory(
     """
     # Ensure output directories exist
     Path(output_snapshots).parent.mkdir(parents=True, exist_ok=True)
-    Path(output_hawkes).parent.mkdir(parents=True, exist_ok=True)
     Path(output_agents).parent.mkdir(parents=True, exist_ok=True)
 
     # Find all message files
@@ -245,7 +132,6 @@ def process_lobster_directory(
     print(f"Found {len(message_files)} message file(s) in {data_dir}")
 
     all_snapshots  = []
-    hawkes_times   = []
     all_messages   = []
 
     for msg_path in message_files:
@@ -285,9 +171,6 @@ def process_lobster_directory(
 
         all_snapshots.append(snapshots)
 
-        # ── Collect timestamps for Hawkes calibration ──────────────────
-        hawkes_times.extend(msg.loc[msg["Type"].isin([4, 5]), "Time"].tolist())
-
         # ── Collect message rows for agent parameter calibration ────────
         all_messages.append(msg)
 
@@ -303,15 +186,6 @@ def process_lobster_directory(
     print(f"  Snapshot shape: {snapshots_arr.shape}  "
           f"(each row = {snapshots_arr.shape[1]}-dim depth profile)")
 
-    # ── Fit and save Hawkes parameters ──────────────────────────────────
-    print("\nFitting Hawkes process via hawkeslib...")
-    if len(hawkes_times) < 2:
-        raise ValueError("Not enough events to fit Hawkes process (need at least 2)")
-    hawkes_params = fit_hawkes_mle(np.array(sorted(hawkes_times)))
-    with open(output_hawkes, "w") as f:
-        json.dump(hawkes_params, f, indent=2)
-    print(f"Saved Hawkes params → {output_hawkes}")
-
     # ── Compute and save agent calibration parameters ───────────────────
     print("\nComputing background agent calibration parameters...")
     combined_messages = pd.concat(all_messages, ignore_index=True)
@@ -320,7 +194,7 @@ def process_lobster_directory(
         json.dump(agent_params, f, indent=2)
     print(f"Saved agent params → {output_agents}")
 
-    return snapshots_arr, hawkes_params, agent_params
+    return snapshots_arr, agent_params
 
 if __name__ == "__main__":
     import argparse
@@ -350,12 +224,6 @@ if __name__ == "__main__":
         help="Where to save the processed LOB snapshot array for AE pre-training."
     )
     parser.add_argument(
-        "--output_hawkes",
-        type=str,
-        default="data/calibration/hawkes_params.json",
-        help="Where to save the fitted Hawkes parameters JSON."
-    )
-    parser.add_argument(
         "--output_agents",
         type=str,
         default="data/calibration/agent_params.json",
@@ -363,18 +231,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    snapshots, hawkes_params, agent_params = process_lobster_directory(
+    snapshots, agent_params = process_lobster_directory(
         data_dir=args.data_dir,
         n_levels=args.n_levels,
         output_snapshots=args.output_snapshots,
-        output_hawkes=args.output_hawkes,
         output_agents=args.output_agents,
     )
 
     print("\n=== process_lobster.py complete ===")
     print(f"  LOB snapshots : {snapshots.shape} → {args.output_snapshots}")
-    print(f"  Hawkes (hawkeslib): mu={hawkes_params['mu']:.6e}, alpha={hawkes_params['alpha']:.6f}, beta={hawkes_params['beta']:.6f}")
-    print(f"  branching ratio: {hawkes_params['branching_ratio']:.4f}")
     print(f"  Agent params  : arrival_rate={agent_params['arrival_rate_per_sec']:.3f} "
           f"events/sec, mean_size={agent_params['mean_order_size']:.1f}")
-    print(f"  Outputs saved : {args.output_hawkes}, {args.output_agents}")
+    print(f"  Outputs saved : {args.output_agents}")

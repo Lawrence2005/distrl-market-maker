@@ -16,7 +16,6 @@ data/
 ├── lobster/                          ← gitignored when data arrives
 │   └── README.md                     ← instructions for obtaining LOBSTER data
 ├── calibration/
-│   ├── hawkes_params.json            ← populated from whichever source runs first
 │   └── agent_params.json
 ├── processed/
 │   └── lob_snapshots.npy             ← gitignored, AE pre-training input
