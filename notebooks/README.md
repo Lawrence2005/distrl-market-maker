@@ -10,5 +10,4 @@
 | 06_as_recovery.ipynb          | 6 | First AS/GLFT recovery test |
 | 07_ablation_analysis.ipynb    | 8 | Encoder x agent ablation table |
 | 08_efficient_frontier.ipynb   | 9 | CVaR alpha sweep, frontier plot |
-| 09_flash_crash.ipynb          | 9 | Stress test comparison |
 | 10_final_figures.ipynb        | 10 | Publication-quality figures |

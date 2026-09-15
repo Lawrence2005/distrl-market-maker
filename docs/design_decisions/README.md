@@ -23,6 +23,9 @@ with clear reasoning. Useful for write-up and interviews.
   Spooner & Savani themselves note direct risk-sensitive RL is numerically
   unstable. Our CVaR wrapper achieves robustness through a tractable
   alternative mechanism.
-- **Our analog**: Flash crash stress test (Week 9) serves as a fixed-adversary
-  robustness check. ARL is the natural next step.
+- **Our analog**: none currently in scope — the flash-crash stress test that
+  served as a fixed-adversary robustness check was removed from the project
+  (see git history) after its ABIDES-native shock mechanism proved
+  numerically unstable. ARL remains the natural next step if a robustness
+  check is revisited.
 - **Future work**: Implement NAC-S(lambda) adversary agent post-project.

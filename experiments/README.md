@@ -12,7 +12,6 @@ Examples:
   w06_qrdqn_handcrafted_asymmetric_lowvol_convergence_check/
   w07_qrdqn_ae_asymmetric_highvol_alpha0.10/
   w08_ablation_all_agents_all_encoders_lowvol/
-  w09_flash_crash_dqn_vs_qrdqn_alpha005/
 
 ## Reproducing a Run
 ```bash

@@ -17,8 +17,8 @@ Research questions answered
 Q1: Does recurrent integration (LSTM) consistently outperform snapshot
     encoders across DQN, QR-DQN, and IQN — or only for some agents?
 
-Q2: Is the recurrent advantage largest in high-vol / trending regimes
-    (where temporal order flow clustering is most predictive)?
+Q2: Is the recurrent advantage largest in high-vol regimes (where temporal
+    order flow clustering is most predictive)?
 
 Q3: Does the recurrent advantage compound with the CVaR distributional
     objective (QR-DQN/IQN > DQN)?
@@ -301,8 +301,8 @@ class AblationAnalysis:
         """
         Compare recurrent vs snapshot advantage across regimes.
 
-        Tests whether recurrent advantage is largest in high-vol/trending
-        regimes where temporal order flow clustering is most predictive.
+        Tests whether recurrent advantage is largest in high-vol regimes
+        where temporal order flow clustering is most predictive.
 
         Parameters
         ----------
@@ -315,7 +315,7 @@ class AblationAnalysis:
         pd.DataFrame — one row per regime
         """
         if regimes is None:
-            regimes = ["low_vol", "high_vol", "trending", "normal"]
+            regimes = ["low_vol", "high_vol", "normal"]
 
         rows = []
         for regime in regimes:

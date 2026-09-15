@@ -12,7 +12,6 @@ Any figure regenerates in one line:
     viz.plot_quote_skew(run_tags=["qrdqn_handcrafted_asymmetric_low_vol_seed42"])
     viz.plot_ablation_matrix()
     viz.plot_efficient_frontier()
-    viz.plot_flash_crash()
 
 Dark theme matches Week 3 baseline figures so overlays are consistent.
 
@@ -59,11 +58,9 @@ ENCODER_MARKERS = {
 }
 
 REGIME_LINESTYLES = {
-    "low_vol":    "-",
-    "high_vol":   "--",
-    "trending":   "-.",
-    "normal":     ":",
-    "flash_crash": (0, (3, 1, 1, 1)),
+    "low_vol":  "-",
+    "high_vol": "--",
+    "normal":   ":",
 }
 
 
@@ -520,55 +517,6 @@ class Visualizer:
         if save:
             return self._save(fig, f"efficient_frontier_{agent}_{regime}.png",
                               "w09_frontier")
-        return fig
-
-    # ------------------------------------------------------------------
-    # Flash crash stress test (Week 9)
-    # ------------------------------------------------------------------
-
-    def plot_flash_crash(
-        self,
-        agent_pnl_data: dict[str, np.ndarray],
-        crash_step:     int = 150,
-        save:           bool = True,
-    ) -> plt.Figure:
-        """
-        Plot cumulative PnL through flash crash for multiple agents.
-
-        Parameters
-        ----------
-        agent_pnl_data : dict mapping agent_name → cum_pnl array shape (T,)
-        crash_step     : step at which crash begins (vertical line)
-        save           : save figure
-
-        Returns
-        -------
-        matplotlib Figure
-        """
-        fig, ax = _dark_fig(figsize=(11, 5))
-
-        for agent_name, cum_pnl in agent_pnl_data.items():
-            color = AGENT_COLORS.get(agent_name, "#ffffff")
-            ax.plot(cum_pnl, color=color, lw=2.0, label=agent_name)
-
-        # Crash annotation
-        ax.axvline(crash_step, color="#f87171", lw=1.5, ls="--", alpha=0.8)
-        ax.annotate("Flash crash", xy=(crash_step, ax.get_ylim()[0]),
-                    xytext=(crash_step + 5, ax.get_ylim()[0] * 0.8),
-                    color="#f87171", fontsize=9,
-                    arrowprops=dict(arrowstyle="->", color="#f87171", lw=0.8))
-
-        ax.axhline(0, color=THEME["subtext"], lw=0.6, ls=":", alpha=0.4)
-
-        _label(ax,
-               xlabel="Step",
-               ylabel="Cumulative PnL  ($)",
-               title="Flash Crash Stress Test — DQN vs QR-DQN(α=0.05)\n"
-                     "Agents trained on low_vol, tested on flash_crash (OOD)")
-        _legend(ax)
-
-        if save:
-            return self._save(fig, "flash_crash_stress.png", "w09_frontier")
         return fig
 
     # ------------------------------------------------------------------

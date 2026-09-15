@@ -101,6 +101,24 @@ ask = mid + δ_a × tick_size
 
 Justification: Gašperov & Kostanjčar (2021) finds discrete actions standard in RL MM. Sun et al. (2022) finds 11–21 levels per side optimal; we use 9 as a starting point.
 
+**As actually implemented** (`envs/lob_env.py`): one-sided, independently
+chosen offsets per side, `δ_b, δ_a ∈ TICK_OFFSETS = {0,10,20,...,100} ticks`
+→ 11x11 = 121 actions (`bid = mid − δ_b·tick_size`, `ask = mid + δ_a·tick_size`,
+δ never negative — bid always at/below mid, ask always at/above). Spacing was
+widened from the original `{0,...,10}` (i.e. $0-$0.10 max offset) to
+`{0,10,...,100}` ($0-$1.00) after finding the narrower range was 3-10x
+tighter than a single-step price move at this market's real ~$1000 mid
+(AS(2008)-typical sigma 0.0003-0.001/step implies $0.30-$1.00/step) — level
+*count* (11) is unchanged, so this doesn't affect network output layers,
+replay buffer shapes, or SARSA's tile coding.
+
+**Order size**: every submitted order is `order_size` shares (default 100,
+matching ABIDES background agents' typical lot size — see
+`abides_markets/models/order_size_model.py`). This was previously hardcoded
+to 1 share, making the reward's spread-capture term ~2 orders of magnitude
+too small relative to the per-step inventory mark-to-market term (see §5) —
+not a documented design choice, a bug.
+
 ---
 
 ## 4. Reward Functions
@@ -161,7 +179,7 @@ IQN:    action = argmax_a mean(Z(s,a,τ) for τ~U([0,α]))
 ```
 Simulator:     ABIDES-Gym
 Length:        3900 steps (one trading day)
-Inventory:     |q_t| ≤ Q_max = 10
+Inventory:     |q_t| ≤ Q_max = 1000 shares (order_size = 100 shares/order, ~10 orders' worth)
 Background:    50 noise traders, 10 momentum, 5 informed
 
 Arrivals: Hawkes — λ(t) = μ + Σ_j α·exp(−β·(t−t_j))
@@ -195,9 +213,12 @@ RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kos
 |--------|---|----------|-------|------------|--------------|
 | Low-Vol | σ_low≈0.5bps | Poisson | 0 | 5% | GLFT recovery; SARSA>Q-learning |
 | High-Vol | σ_high≈2.0bps | Hawkes | 0 | 10% | CVaR advantage; recurrent>snapshot |
-| Trending | σ_mid | Hawkes | μ≠0 | 20% | Inventory exploitation; recurrent temporal advantage |
-| Flash Crash | σ_high+5σ | Spike | μ<0 | 40% | CVaR vs. DQN drawdown |
 | OOD Transfer | σ_high (trained σ_low) | Hawkes | 0 | 10% | Recurrent IQN vs. snapshot QR-DQN degradation |
+
+(Trending and Flash Crash regimes were removed from the project — see git
+history. Trending had no real drift mechanism under real ABIDES (rmsc04's
+fundamental is mean-reverting, not driftable); Flash Crash's ABIDES-native
+megashock mechanism proved numerically unstable during calibration.)
 
 ---
 
@@ -205,7 +226,7 @@ RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kos
 
 **Macro/micro hierarchical agent (Patel 2018):** Patel's own results show multi-agent underperforms micro-only. Recurrent integration (LSTM inside DQN/QR-DQN/IQN) subsumes the temporal LOB awareness of the micro-agent without coordination overhead.
 
-**Adversarial RL (Spooner & Savani 2020):** Requires co-evolving adversary in ABIDES — a separate research project. CVaR achieves robustness tractably. Flash crash stress test is our robustness check.
+**Adversarial RL (Spooner & Savani 2020):** Requires co-evolving adversary in ABIDES — a separate research project. CVaR achieves robustness tractably. No fixed-adversary robustness check is currently in scope (the flash-crash stress test that served this role was removed — see §8).
 
 ---
 

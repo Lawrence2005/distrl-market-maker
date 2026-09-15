@@ -23,7 +23,6 @@
 | **Adverse Selection** | **Adverse Selection Cost** | `Effective spread − Quoted spread` | Measures how much spread revenue is lost to informed traders. | Ganesh et al. (2019); Gašperov Signals (2021) |
 | **AS Theory Alignment** | **Quote-Skew R² (AS Recovery)** | `R²(agent_bid_offset ~ GLFT_reservation_price_skew)`<br>Run separately against AS and GLFT reference curves. | Quantifies whether the learned policy rediscovered optimal inventory management. GLFT is the primary benchmark; AS serves as the idealized reference. | AS (2008); Guéant et al. (2012); Spooner et al. (2018); Gašperov & Kostanjčar (2021) |
 | **Robustness** | **OOD Performance Degradation** | `(Sharpe_in_distribution − Sharpe_OOD) / Sharpe_in_distribution` | Measures generalization failure when tested under unseen market conditions. | Spooner & Savani (2020); Dabney et al. IQN (2018) |
-| **Robustness** | **Flash Crash Max Drawdown** | Max drawdown during synthetic `5σ` flash-crash event | Distributional agents should exhibit smaller drawdowns than expected-value agents. | Spooner & Savani (2020) |
 | **State Representation** | **Latent Space Regime Separability** | Silhouette score of PCA/t-SNE clusters on AE latent vectors labeled by regime | Measures encoder interpretability and representation quality. | Gašperov & Kostanjčar (2021); Kumar |
 
 ---
@@ -34,9 +33,12 @@
 |----------|----------|----------|----------|----------|----------|
 | **Low-Vol Baseline** | `σ_low ≈ 0.5 bps/step` | Poisson (`λ` calibrated) | `μ = 0` | ~5% | **AS/GLFT Recovery:** Agent should converge to GLFT-like inventory skewing. SARSA should outperform Q-learning because on-policy advantages are clearest in stable, low-noise environments. Poisson arrivals used here; Hawkes arrivals reserved for high-volatility regimes. |
 | **High-Vol Stochastic** | `σ_high ≈ 2.0 bps/step` | Hawkes Process (Bacry et al., 2015) | `μ = 0` | ~10% | **Distributional Advantage:** CVaR agents should outperform DQN on tail-risk metrics. Hawkes arrivals create bursty order flow and fat-tailed returns, making distributional objectives especially valuable. Also primary regime for testing recurrent vs. snapshot advantage — temporal order flow clustering is most predictive here. |
-| **Trending Market** | `σ_mid` | Hawkes Process | `μ ≠ 0` | ~20% | **Inventory Exploitation:** Agent should build directional inventory positions. Tests management of adverse selection under elevated informed-trader activity. Secondary regime for recurrent advantage — drift creates temporal patterns exploitable by LSTM memory. |
-| **Flash Crash (Stress)** | `σ_high + 5σ shock` | Spike (simulated) | Sudden `μ < 0` | ~40% | **Robustness:** Compare max drawdown of CVaR agents vs. DQN during severe market dislocations. |
 | **OOD Transfer** | `σ_high` (trained on `σ_low`) | Hawkes | `μ = 0` | ~10% | **Generalization:** IQN should degrade less than QR-DQN under out-of-distribution conditions. Recurrent variants hypothesised to generalise better than snapshot variants. |
+
+(Trending Market and Flash Crash (Stress) regimes were removed from the
+project — see git history. Trending had no real drift mechanism under real
+ABIDES; Flash Crash's ABIDES-native megashock mechanism proved numerically
+unstable during calibration.)
 
 ---
 
@@ -56,7 +58,7 @@ SARSA uses tile coding only and is incompatible with both neural encoders and re
 | **Handcrafted Features (Baseline)** | Raw feature vector: bid-ask spread, mid-price move, queue imbalance, signed volume, realised volatility, RSI, LOB depth (K levels), inventory, active quoting distances, outstanding prices, trade prices, cash, time remaining | None; directly computed from ABIDES-Gym observations | ~17 dims | Highly interpretable; computationally efficient; closely aligned with AS intuition. Expected to struggle with complex, non-linear LOB patterns. | Spooner et al. (2018); Huang et al. (2015); Patel (2018); Sun et al. (2022) |
 | **1D CNN Encoder** | `Conv1D(32,k=3) → ReLU → Conv1D(16,k=3) → ReLU → Linear(latent_dim)`<br><br>Input = concatenated bid/ask depth vectors (price × quantity across K levels) | End-to-end training jointly with RL agent | 16–32 dims (tuned) | Captures spatial LOB structure and multi-level depth imbalance that scalar features miss. More expressive than handcrafted features while remaining lightweight and interpretable. | Gašperov & Kostanjčar (2021) parallel architecture motivation. **Not from Kumar (2019) — Kumar only compares DRQN vs. DQN.** |
 | **Autoencoder (AE) Encoder** | Convolutional autoencoder pre-trained on LOBSTER snapshots. Encoder frozen after pre-training. Decoder mirrors encoder architecture. | Unsupervised pre-training via reconstruction MSE on LOBSTER data.<br><br>Latent dimension ablation: `{8, 16, 32}` | 8–32 dims | Learns compact market representations independent of the reward signal. Potentially stronger OOD generalization and latent-space interpretability — PCA/t-SNE clusters should correspond to market regimes. | Gašperov et al. survey (2021) — explicitly lists autoencoders as a promising state representation |
-| **Recurrent Integration (LSTM inside agent)** | `LSTM(hidden=128)` integrated inside each agent's network — LOB features → LSTM → Q-head/policy head. Not an external encoder module. Shared backbone in `agents/recurrent_base.py`; instantiated as DRQN, RecurrentQRDQN, RecurrentIQN.<br><br>Hidden state `(h_t, c_t)` carried across timesteps within an episode; reset at episode start. | End-to-end training with truncated BPTT (`T=30`).<br><br>Sequence replay buffer stores raw LOB sequences; hidden states recomputed during training to avoid stale-state bias. | 128-dim hidden state `h_t` | Captures temporal order-flow dynamics: Hawkes clustering, momentum, mean-reversion. Advantage expected to be largest in High-Vol and Trending regimes. Primary ablation question: does recurrent integration consistently outperform snapshot encoders across DQN, QR-DQN, and IQN — and does that advantage compound with CVaR? | Sun, Huang & Yu (2022) — DRQN-LSTM for LOB MM; Hausknecht & Stone (2015) — original DRQN; Kumar (2019) — DRQN outperforms DQN |
+| **Recurrent Integration (LSTM inside agent)** | `LSTM(hidden=128)` integrated inside each agent's network — LOB features → LSTM → Q-head/policy head. Not an external encoder module. Shared backbone in `agents/recurrent_base.py`; instantiated as DRQN, RecurrentQRDQN, RecurrentIQN.<br><br>Hidden state `(h_t, c_t)` carried across timesteps within an episode; reset at episode start. | End-to-end training with truncated BPTT (`T=30`).<br><br>Sequence replay buffer stores raw LOB sequences; hidden states recomputed during training to avoid stale-state bias. | 128-dim hidden state `h_t` | Captures temporal order-flow dynamics: Hawkes clustering, momentum, mean-reversion. Advantage expected to be largest in High-Vol regimes. Primary ablation question: does recurrent integration consistently outperform snapshot encoders across DQN, QR-DQN, and IQN — and does that advantage compound with CVaR? | Sun, Huang & Yu (2022) — DRQN-LSTM for LOB MM; Hausknecht & Stone (2015) — original DRQN; Kumar (2019) — DRQN outperforms DQN |
 
 ---
 
@@ -81,9 +83,9 @@ SARSA uses tile coding only and is incompatible with both neural encoders and re
 
 1. Low-Vol Baseline
 2. High-Vol Stochastic
-3. Trending Market
-4. Flash Crash
-5. OOD Transfer
+3. OOD Transfer
+
+(Trending Market and Flash Crash were removed from the project — see git history.)
 
 ### Core Research Questions
 
@@ -92,6 +94,6 @@ SARSA uses tile coding only and is incompatible with both neural encoders and re
 3. Does recurrent integration (LSTM inside agent) consistently outperform snapshot encoders across DQN, QR-DQN, and IQN?
 4. Does the recurrent advantage compound with the CVaR distributional objective — particularly in high-volatility Hawkes regimes?
 5. Can agents rediscover GLFT-style inventory control in low-volatility conditions?
-6. How robust are learned policies under flash-crash and OOD conditions?
+6. How robust are learned policies under OOD conditions?
 7. Does AE pre-training improve convergence speed and OOD generalization relative to end-to-end CNN training?
 8. How closely do learned policies align with analytical market-making theory (AS/GLFT)?
