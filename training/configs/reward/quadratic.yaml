@@ -4,4 +4,9 @@
 # Symmetric quadratic penalty on inventory level.
 
 reward_type: quadratic
-lam: 0.1      # inventory penalty coefficient — ablate: 0.01, 0.1, 1.0
+# inventory penalty coefficient — ablate: 0.0001, 0.001, 0.01
+# Rescaled 100x down (was 0.1) after order_size went from 1 to 100 shares:
+# q^2 scales quadratically with the size increase while pnl scales only
+# linearly, so lam must shrink by ~1/size_ratio to preserve the original
+# pnl-vs-penalty balance (see envs/lob_env.py order_size / Q_max docs).
+lam: 0.001

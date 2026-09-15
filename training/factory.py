@@ -229,29 +229,24 @@ def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMark
         reward_type  = reward_cfg.reward_type,
         eta          = reward_cfg.get("eta",  0.5),
         lam          = reward_cfg.get("lam",  0.1),
-        Q_max        = env_cfg.get("Q_max",        10),
+        Q_max        = env_cfg.get("Q_max",        1000),
+        order_size   = env_cfg.get("order_size",   100),
         tick_size    = env_cfg.get("tick_size",     0.01),
         episode_len  = env_cfg.get("episode_len",   390),
         kappa        = env_cfg.get("kappa",         1.0),
         n_lob_levels = env_cfg.get("n_lob_levels",  3),
         seed         = seed,
         use_abides   = use_abides,
+        background_config_extra_kvargs = dict(env_cfg.get("abides_overrides", {}) or {}),
     )
 
+    # sigma_override below only takes effect through LOBMarketMakingEnv's
+    # synthetic-fallback path (use_abides=False) — kept for fast unit tests.
+    # Under real ABIDES (use_abides=True, the normal training/eval path),
+    # regime differentiation comes from `abides_overrides` above instead
+    # (fund_vol etc, forwarded to rmsc04's background config).
     sigma_override = env_cfg.get("sigma_override", None)
     if sigma_override is not None:
         env._sigma_override = float(sigma_override)
-
-    if regime == "flash_crash":
-        fc = env_cfg.get("flash_crash", {})
-        env._crash_start   = fc.get("crash_start_step", 150)
-        env._crash_mag     = fc.get("crash_magnitude",   0.10)
-        env._crash_dur     = fc.get("crash_duration",    20)
-        env._recovery_frac = fc.get("recovery_frac",     0.50)
-        env._recovery_dur  = fc.get("recovery_duration", 80)
-        env._post_sigma    = fc.get("post_crash_sigma",  0.015)
-
-    if regime == "trending":
-        env._drift = env_cfg.get("drift", 0.0002)
 
     return env

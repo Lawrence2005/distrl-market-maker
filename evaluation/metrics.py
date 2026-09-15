@@ -240,7 +240,7 @@ def episode_metrics(
     step_pnls:   np.ndarray,
     inventories: np.ndarray,
     cum_pnls:    np.ndarray,
-    q_max:       int = 10,
+    q_max:       int = 1000,
     bid_fills:   Optional[np.ndarray] = None,
     ask_fills:   Optional[np.ndarray] = None,
 ) -> dict:
@@ -252,7 +252,10 @@ def episode_metrics(
     step_pnls   : np.ndarray shape (T,)
     inventories : np.ndarray shape (T,)
     cum_pnls    : np.ndarray shape (T,)
-    q_max       : int — inventory constraint
+    q_max       : int — inventory constraint, in the same real-share units
+        as the env's Q_max (callers should pass env.Q_max explicitly —
+        this default is just a fallback, unused by training/evaluate.py's
+        own call site, which already does)
     bid_fills   : np.ndarray shape (T,) or None
     ask_fills   : np.ndarray shape (T,) or None
 

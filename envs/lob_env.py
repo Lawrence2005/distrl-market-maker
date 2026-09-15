@@ -16,14 +16,42 @@ from typing import Optional, Tuple, Dict, Any
 import warnings
 import yaml
 
+def _install_pomegranate_compat_shim() -> None:
+    """
+    abides_markets.models.order_size_model needs pomegranate<1.0's
+    GeneralMixtureModel.from_json API; the installed pomegranate (1.x) is
+    an unrelated rewrite without it, and 0.14.x can't build on Python
+    3.12. See envs/_pomegranate_compat.py for the full explanation.
+    """
+    import sys
+
+    try:
+        from pomegranate import GeneralMixtureModel
+        GeneralMixtureModel.from_json  # noqa: B018 — presence check
+        return  # a compatible pomegranate is already installed
+    except (ImportError, AttributeError):
+        pass
+
+    from envs import _pomegranate_compat
+    sys.modules["pomegranate"] = _pomegranate_compat
+
+
+_install_pomegranate_compat_shim()
+
 try:
     from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
 except ImportError:
     SubGymMarketsExecutionEnv_v0 = None
 
 # Action space: bid/ask offsets in ticks
-# δ ∈ {0, 1, ..., 10} → 11 levels per side → 121 total
-TICK_OFFSETS = np.arange(0, 11, dtype=np.int64)
+# δ ∈ {0, 10, 20, ..., 100} → 11 levels per side → 121 total.
+# Spacing (not level count) was widened from {0..10} after finding the old
+# $0-0.10 range was 3-10x narrower than a single-step price move at this
+# market's real ~$1000 mid (AS(2008)-typical sigma 0.0003-0.001/step implies
+# $0.30-$1.00/step) — agents couldn't skew quotes beyond single-step noise.
+# Kept at 11 levels (same 121-action space) so existing network output
+# layers, replay buffer shapes, and SARSA's tile coding are unaffected.
+TICK_OFFSETS = np.arange(0, 110, 10, dtype=np.int64)
 N_OFFSET_LEVELS = len(TICK_OFFSETS)
 
 # Rolling-history window caps (avoid unbounded memory growth)
@@ -33,8 +61,18 @@ _LOB_HISTORY_MAXLEN    = 100
 _ABIDES_FALLBACK_WARNED = False
 
 
-def build_abides_env(use_abides: bool):
-    """Creates ABIDES env when available, else fall back to synthetic mode"""
+def build_abides_env(use_abides: bool, background_config_extra_kvargs: dict | None = None):
+    """
+    Creates ABIDES env when available, else fall back to synthetic mode.
+
+    background_config_extra_kvargs is forwarded to rmsc04's build_config
+    (via SubGymMarketsExecutionEnv_v0's own background_config_extra_kvargs
+    passthrough) — this is how regime overlays (env/regime/*.yaml) actually
+    reach the real simulator's dynamics (e.g. fund_vol, megashock_*).
+    Previously regimes only touched _gbm_step()'s synthetic-fallback path,
+    which never runs when use_abides=True — every regime comparison was
+    silently comparing identical real-ABIDES dynamics with different seeds.
+    """
     global _ABIDES_FALLBACK_WARNED
 
     if not use_abides:
@@ -50,7 +88,10 @@ def build_abides_env(use_abides: bool):
             _ABIDES_FALLBACK_WARNED = True
         return None
 
-    return AbidesMarketMakingEnv(background_config="rmsc04")
+    return AbidesMarketMakingEnv(
+        background_config="rmsc04",
+        background_config_extra_kvargs=background_config_extra_kvargs or {},
+    )
 
 class LOBMarketMakingEnv(gym.Env):
     """
@@ -58,8 +99,8 @@ class LOBMarketMakingEnv(gym.Env):
 
     Observation space: handcrafted feature vector (~17 dims, see §2 MDP doc)
     Action space:   MultiDiscrete([N_OFFSET_LEVELS, N_OFFSET_LEVELS]) — N_OFFSET_LEVELS bid-offset × N_OFFSET_LEVELS ask-offset
-                    Bid index selects δ_b ∈ {0,…,10} ticks below mid.
-                    Ask index selects δ_a ∈ {0,…,10} ticks above mid.
+                    Bid index selects δ_b ∈ TICK_OFFSETS ticks below mid.
+                    Ask index selects δ_a ∈ TICK_OFFSETS ticks above mid.
     Reward:            one of asymmetric / quadratic / sparse (see §4 MDP doc)
 
     Parameters
@@ -67,12 +108,19 @@ class LOBMarketMakingEnv(gym.Env):
     reward_type : str   — 'asymmetric' | 'quadratic' | 'sparse'
     eta         : float — inventory-PnL dampening for asymmetric reward (default 0.5)
     lam         : float — quadratic inventory penalty coefficient (default 0.1)
-    Q_max       : int   — hard inventory constraint |q| ≤ Q_max (default 10)
+    Q_max       : int   — hard inventory constraint |q| ≤ Q_max, in shares (default 1000)
+    order_size  : int   — shares submitted per order (default 100, matching
+        ABIDES background agents' typical lot size)
     tick_size   : float — price tick size in dollars (default 0.01)
     episode_len : int   — steps per episode (default 3900 = one trading day)
     kappa       : float — terminal inventory penalty coefficient (default 1.0)
     n_lob_levels: int   — number of LOB depth levels to include (default 3)
     seed        : int
+    background_config_extra_kvargs : dict | None — forwarded to the real
+        ABIDES background config (rmsc04) when use_abides=True — this is
+        how regime overlays actually vary the simulated market (fund_vol,
+        megashock_* for a stress regime), not the (fallback-only)
+        sigma_override/_gbm_step mechanism below
 
     Usage
     -----
@@ -102,17 +150,19 @@ class LOBMarketMakingEnv(gym.Env):
         reward_type: str = "asymmetric",
         eta: float = 0.5,
         lam: float = 0.1,
-        Q_max: int = 10,
+        Q_max: int = 1000,
         tick_size: float = 0.01,
         episode_len: int = 3900,
         kappa: float = 1.0,
         n_lob_levels: int = 3,
         seed: int = 42,
         use_abides: bool = True,
+        order_size: int = 100,
+        background_config_extra_kvargs: dict | None = None,
     ):
         super().__init__()
 
-        self._abides_env = build_abides_env(use_abides)
+        self._abides_env = build_abides_env(use_abides, background_config_extra_kvargs)
 
         cfg = {}
         if config is not None:
@@ -123,24 +173,15 @@ class LOBMarketMakingEnv(gym.Env):
         self.eta = cfg.get("eta", eta)
         self.lam = cfg.get("lam", lam)
         self.Q_max = cfg.get("Q_max", Q_max)
+        self.order_size = cfg.get("order_size", order_size)
         self.tick_size = cfg.get("tick_size", tick_size)
         self.episode_len = cfg.get("episode_len", episode_len)
         self.kappa = cfg.get("kappa", kappa)
         self.n_lob_levels = cfg.get("n_lob_levels", n_lob_levels)
         self.seed_val = cfg.get("seed", seed)
 
-        # Flash crash params (read from regime config via build_env)
-        self._crash_start   = None   # step at which crash begins
-        self._crash_mag     = 0.0    # fractional price drop
-        self._crash_dur     = 0      # steps over which price falls
-        self._recovery_frac = 0.0    # fraction of drop recovered
-        self._recovery_dur  = 0      # steps for recovery
-        self._post_sigma    = None   # elevated vol after crash
-        self._crash_drop    = 0.0    # computed dollar drop (set at crash start)
-                        
         assert self.reward_type in ("asymmetric", "quadratic", "sparse"), (f"reward_type must be 'asymmetric', 'quadratic', or 'sparse', "f"got '{self.reward_type}'")
 
-        self._drift = 0.0   # per-step log drift for trending regime
         self._sigma_override = None  # optional vol override
 
         # ── Action space: bid/ask offset indices ─────────────
@@ -349,23 +390,31 @@ class LOBMarketMakingEnv(gym.Env):
         # [base+0] Inventory normalised to [−1, +1]
         obs[base + 0] = float(np.clip(self._inventory / self.Q_max, -1.0, 1.0))
 
+        # Max quotable tick offset — bounds both the raw tick distance
+        # features and the dollar-offset features below. Deliberately not
+        # Q_max: that's an inventory-share limit with no relation to the
+        # quoting range, and normalising by it here silently breaks once
+        # Q_max and the tick range are scaled independently.
+        max_offset = float(TICK_OFFSETS[-1])
+
         # [base+1] Active bid-offset from mid (ticks), normalised by max offset
-        obs[base + 1] = float(np.clip(self._bid_dist / 10.0, 0.0, 1.0))
+        obs[base + 1] = float(np.clip(self._bid_dist / max_offset, 0.0, 1.0))
 
         # [base+2] Active ask-offset from mid (ticks), normalised by max offset
-        obs[base + 2] = float(np.clip(self._ask_dist / 10.0, 0.0, 1.0))
+        obs[base + 2] = float(np.clip(self._ask_dist / max_offset, 0.0, 1.0))
 
-        # [base+3] Outstanding bid price offset from mid, normalised by Q_max·tick
-        #          (Sun et al. 2022 private-state feature)
+        # [base+3] Outstanding bid price offset from mid, normalised by the
+        #          max quotable dollar offset (Sun et al. 2022 private-state feature)
         if self._mid_price > 0 and self._outstanding_bid > 0:
             bid_offset_norm = (self._outstanding_bid - self._mid_price) / \
-                              (self.Q_max * self.tick_size)
+                              (max_offset * self.tick_size)
             obs[base + 3] = float(np.clip(bid_offset_norm, -1.0, 1.0))
 
-        # [base+4] Outstanding ask price offset from mid, normalised by Q_max·tick
+        # [base+4] Outstanding ask price offset from mid, normalised by the
+        #          max quotable dollar offset
         if self._mid_price > 0 and self._outstanding_ask > 0:
             ask_offset_norm = (self._outstanding_ask - self._mid_price) / \
-                              (self.Q_max * self.tick_size)
+                              (max_offset * self.tick_size)
             obs[base + 4] = float(np.clip(ask_offset_norm, -1.0, 1.0))
 
         # [base+5] Time remaining τ = (T − t) / T ∈ [0, 1]
@@ -666,42 +715,21 @@ class LOBMarketMakingEnv(gym.Env):
 
     def _gbm_step(self) -> float:
         """
-        Advance synthetic mid-price one step.
-        Handles normal GBM, trending drift, and flash crash injection.
+        Advance synthetic mid-price one step (normal GBM only — the
+        trending-drift and flash-crash-injection regimes this method used
+        to handle were removed along with those two regimes; see git
+        history if reviving either).
+
+        Only ever called from the synthetic-fallback branch of step()
+        (use_abides=False) — kept for fast unit tests and as a fallback
+        when abides_gym isn't installed. Under real ABIDES (the actual
+        training/eval path), regime differentiation comes from
+        `abides_overrides` (fund_vol etc, forwarded to rmsc04's background
+        config via build_abides_env), not from this method or the
+        sigma_override attribute it reads.
         """
-        # Base sigma
         sigma = self._sigma_override / self._mid_price if self._sigma_override is not None else self.tick_size / self._mid_price
-
-        # Post-crash elevated vol
-        if self._post_sigma is not None and self._crash_start is not None:
-            crash_end = self._crash_start + self._crash_dur + self._recovery_dur
-            if self._step >= crash_end:
-                sigma = self._post_sigma / self._mid_price
-
-        # Trending drift
-        drift = getattr(self, '_drift', 0.0)
-
-        # Flash crash — sudden drop
-        if (self._crash_start is not None
-                and self._step == self._crash_start):
-            self._crash_drop = self._mid_price * self._crash_mag
-            return self._mid_price - self._crash_drop / self._crash_dur
-
-        # Flash crash — continuing drop
-        if (self._crash_start is not None
-                and self._crash_drop > 0
-                and self._step < self._crash_start + self._crash_dur):
-            return self._mid_price - self._crash_drop / self._crash_dur
-
-        # Flash crash — recovery
-        if (self._crash_start is not None
-                and self._crash_drop > 0
-                and self._step < self._crash_start + self._crash_dur + self._recovery_dur):
-            recovery_per_step = (self._crash_drop * self._recovery_frac) / self._recovery_dur
-            return self._mid_price + recovery_per_step
-
-        # Normal GBM + optional drift
-        shock = self._rng.normal(drift, sigma)
+        shock = self._rng.normal(0.0, sigma)
         return max(self._mid_price * np.exp(shock), self.tick_size)
 
     # ------------------------------------------------------------------
@@ -732,6 +760,7 @@ class LOBMarketMakingEnv(gym.Env):
         """
         self._abides_env._pending_bid_price = int(round(bid_price * 100))
         self._abides_env._pending_ask_price = int(round(ask_price * 100))
+        self._abides_env._pending_order_size = self.order_size
         return 0  # dummy token, always 0
 
     def _parse_abides_step(self, raw_state: dict) -> dict:
@@ -793,6 +822,7 @@ else:
             self.action_space = gym.spaces.Discrete(1)
             self._pending_bid_price: int = 0  # cents
             self._pending_ask_price: int = 0  # cents
+            self._pending_order_size: int = 100  # shares — set per-step by LOBMarketMakingEnv._encode_abides_action
 
             # ABIDES declares tight bounds on its own obs space but background agents regularly push features (holdings_pct, time_pct, etc.) outside them. Widen to float32 max to suppress the internal contains() assert.
             n = self.observation_space.shape[0]
@@ -806,8 +836,8 @@ else:
         def _map_action_space_to_ABIDES_SIMULATOR_SPACE(self, action: int):
             return [
                 {"type": "CCL_ALL"},
-                {"type": "LMT", "direction": "BUY",  "size": 1,
+                {"type": "LMT", "direction": "BUY",  "size": self._pending_order_size,
                 "limit_price": self._pending_bid_price},
-                {"type": "LMT", "direction": "SELL", "size": 1,
+                {"type": "LMT", "direction": "SELL", "size": self._pending_order_size,
                 "limit_price": self._pending_ask_price},
             ]

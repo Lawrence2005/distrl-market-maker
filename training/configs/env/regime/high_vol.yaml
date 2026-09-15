@@ -1,9 +1,20 @@
 # configs/env/regime/high_vol.yaml
 # High-volatility regime overlay — merged on top of env/base.yaml.
-# Increases sigma for Hawkes process and tightens inventory constraint.
+# Tightens inventory constraint (real risk is higher per unit inventory
+# when the market is more volatile) and raises real ABIDES volatility via
+# `abides_overrides` (forwarded to rmsc04's background config) — the
+# sigma_override field below only affects the synthetic-fallback path
+# (use_abides=False), kept for fast unit tests. rmsc04's own default
+# fund_vol is 5e-5; this sets it higher for a noisier market. Provisional —
+# verify realized per-step volatility empirically and retune if it doesn't
+# come out meaningfully higher than normal.yaml's.
 
 # @package env
-sigma_override: 0.02     # higher realised vol (passed to baselines for comparison)
+sigma_override: 0.02     # higher realised vol (synthetic-fallback path only)
 episode_len: 390         # keep standard episode length
-Q_max: 5                 # tighter inventory constraint under high vol
+Q_max: 500               # tighter inventory constraint under high vol (half of base.yaml's 1000)
+order_size: 100
 kappa: 1.5               # looser fill rate (wider spreads in high vol)
+
+abides_overrides:
+  fund_vol: 2.0e-4

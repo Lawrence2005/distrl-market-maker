@@ -328,8 +328,11 @@ class TestActionSpace:
         env.close()
 
     def test_tick_offsets_range(self):
+        # Spacing widened from {0..10} to {0,10,...,100} (still 11 levels)
+        # after finding the old $0-0.10 max offset was 3-10x narrower than
+        # a single-step price move at this market's real ~$1000 mid.
         assert TICK_OFFSETS[0]  == 0
-        assert TICK_OFFSETS[-1] ==  10
+        assert TICK_OFFSETS[-1] == 100
         assert N_OFFSET_LEVELS  ==  11
 
     def test_all_actions_valid(self):

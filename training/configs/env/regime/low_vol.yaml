@@ -1,8 +1,20 @@
 # configs/env/regime/low_vol.yaml
 # Low-volatility regime overlay.
+#
+# `abides_overrides` is what actually differentiates real ABIDES dynamics
+# (forwarded to rmsc04's background config) — sigma_override below only
+# takes effect in the synthetic-fallback path (use_abides=False) and is
+# kept for fast unit tests, not real training/eval. rmsc04's own default
+# fund_vol is 5e-5; this sets it lower for a quieter market. Provisional —
+# verify realized per-step volatility empirically and retune if it doesn't
+# come out meaningfully lower than normal.yaml's.
 
 # @package env
 sigma_override: 0.003
 episode_len: 390
-Q_max: 10
+Q_max: 1000
+order_size: 100
 kappa: 0.8
+
+abides_overrides:
+  fund_vol: 1.0e-5

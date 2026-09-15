@@ -1,8 +1,14 @@
 # configs/env/regime/normal.yaml
-# Normal regime — default ABIDES rmsc04 parameters.
+# Normal regime — default ABIDES rmsc04 parameters (real dynamics
+# unmodified; abides_overrides restates rmsc04's own fund_vol default
+# explicitly rather than leaving it implicit).
 
 # @package env
 sigma_override: 0.01
 episode_len: 390
-Q_max: 10
+Q_max: 1000
+order_size: 100
 kappa: 1.0
+
+abides_overrides:
+  fund_vol: 5.0e-5

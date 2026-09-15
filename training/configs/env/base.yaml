@@ -1,14 +1,20 @@
 reward_type: asymmetric
 eta: 0.5
 lam: 0.1
-Q_max: 10
+# Q_max/order_size rescaled from the old (Q_max=10, order_size=1) pair:
+# order_size was hardcoded to 1 share vs. background agents' ~100-share
+# lots, making the reward's spread-capture edge ~2 orders of magnitude
+# too small relative to inventory mark-to-market risk. Q_max keeps the
+# same ~10-lots-worth ratio at the new order size.
+Q_max: 1000
+order_size: 100
 tick_size: 0.01
 episode_len: 390        # 390 = 6.5hr trading day at 1 step/min.
 kappa: 1.0
 n_lob_levels: 3
 seed: 42
 
-use_abides: false
+use_abides: true
 
 # Hawkes arrival process (fitted Week 2, data/calibration/hawkes_params.json)
 hawkes:

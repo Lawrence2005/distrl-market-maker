@@ -55,7 +55,8 @@ class MultiAgentMarketEnv:
     ----------
     n_agents    : int   — number of simultaneous market makers (default 2)
     episode_len : int   — steps per episode (default 390)
-    Q_max       : int   — per-agent inventory constraint (default 10)
+    Q_max       : int   — per-agent inventory constraint, in shares (default 1000)
+    order_size  : int   — shares per submitted order (default 100)
     tick_size   : float — dollar value of one tick (default 0.01)
     reward_type : str   — reward formulation (default 'asymmetric')
     eta         : float — asymmetric reward dampening (default 0.5)
@@ -67,7 +68,8 @@ class MultiAgentMarketEnv:
         self,
         n_agents:    int   = 2,
         episode_len: int   = 390,
-        Q_max:       int   = 10,
+        Q_max:       int   = 1000,
+        order_size:  int   = 100,
         tick_size:   float = 0.01,
         reward_type: str   = "asymmetric",
         eta:         float = 0.5,
@@ -77,6 +79,7 @@ class MultiAgentMarketEnv:
         self.n_agents    = n_agents
         self.episode_len = episode_len
         self.Q_max       = Q_max
+        self.order_size  = order_size
         self.tick_size   = tick_size
         self.reward_type = reward_type
         self.eta         = eta
@@ -88,6 +91,7 @@ class MultiAgentMarketEnv:
         if use_abides:
             self._abides = _MultiAgentAbidesEnv(
                 n_agents    = n_agents,
+                order_size  = order_size,
                 background_config = "rmsc04",
             )
         else:
@@ -398,11 +402,12 @@ class _MultiAgentAbidesEnv(AbidesMarketMakingEnv):
     separate LMT orders in one _map_action_space_to_ABIDES call.
     """
 
-    def __init__(self, n_agents: int = 2, **kwargs):
+    def __init__(self, n_agents: int = 2, order_size: int = 100, **kwargs):
         super().__init__(**kwargs)
         self.n_agents           = n_agents
         self._pending_bids: list[int] = [0] * n_agents
         self._pending_asks: list[int] = [0] * n_agents
+        self._pending_order_size      = order_size
 
     def step_multi(
         self,
@@ -421,11 +426,11 @@ class _MultiAgentAbidesEnv(AbidesMarketMakingEnv):
         for i in range(self.n_agents):
             orders.append({
                 "type": "LMT", "direction": "BUY",
-                "size": 1, "limit_price": self._pending_bids[i],
+                "size": self._pending_order_size, "limit_price": self._pending_bids[i],
             })
             orders.append({
                 "type": "LMT", "direction": "SELL",
-                "size": 1, "limit_price": self._pending_asks[i],
+                "size": self._pending_order_size, "limit_price": self._pending_asks[i],
             })
         return orders
 
