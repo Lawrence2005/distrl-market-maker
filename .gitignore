@@ -38,6 +38,12 @@ outputs/
 multirun/
 .pytest_cache/
 
+# Retired/superseded checkpoints+logs kept locally for reversibility (e.g. a
+# bug-fix invalidates a prior run) — same status as checkpoints/logs above,
+# just moved aside instead of overwritten. Includes raw .npz arrays not
+# covered by the *.pt/*.pth/*.pkl rule below.
+archive/
+
 # Experiment outputs (tracked via W&B, not git)
 experiments/results/runs/
 wandb/

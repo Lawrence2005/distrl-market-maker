@@ -1,0 +1,14 @@
+[Unit]
+Description=distrl-market-maker training run (%i)
+After=network.target
+
+[Service]
+Type=simple
+User=lawre
+WorkingDirectory=/home/lawre/distrl-market-maker
+ExecStart=/home/lawre/distrl-market-maker/scripts/run_job.sh %i
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

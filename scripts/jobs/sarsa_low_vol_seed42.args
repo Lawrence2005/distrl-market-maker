@@ -1,0 +1,12 @@
+/home/lawre/distrl-logs/sarsa_low_vol_seed42.out
+agent=sarsa
+encoder=handcrafted
+reward=asymmetric
+env.regime=low_vol
+env.use_abides=true
+training.n_episodes=500
+training.checkpoint_every=25
+training.eval_every=25
+training.eval_episodes=3
+seed=42
+training.early_stopping=true
