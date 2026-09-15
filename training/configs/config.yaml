@@ -44,8 +44,38 @@ training:
   checkpoint_every:    100     # save checkpoint every N episodes
   checkpoint_dir: checkpoints
   log_dir:        logs
+  resume:              false   # if true, resume from the latest checkpoint in
+                                # checkpoint_dir/<run_tag>/ instead of episode 0
+                                # (pass training.resume=true on the CLI)
+  train_every_n_steps: 1       # DQN/QR-DQN/IQN gradient-update cadence in env
+                                # steps (SARSA/PPO unaffected). 1 = update every
+                                # step (full fidelity). Mnih et al. 2015's
+                                # original Nature DQN updates every 4 frames —
+                                # pass training.train_every_n_steps=4 for a
+                                # ~4x training-time speedup on constrained
+                                # hardware without touching episode_len or the
+                                # Hawkes/background-agent calibration.
   warmup_steps:        1000    # steps before first gradient update
   max_grad_norm:       10.0    # gradient clipping
+
+  # ── Early stopping (opt-in) ──────────────────────────────────────────
+  # Patience-based, on smoothed EVAL Sharpe (not raw per-episode training
+  # Sharpe, which is exploration-contaminated and far noisier — this
+  # mirrors validation-loss-based early stopping in supervised learning).
+  # Stops once the trailing mean of the last early_stopping_smooth_window
+  # eval checkpoints hasn't improved by more than early_stopping_min_delta
+  # for early_stopping_patience consecutive checkpoints, and at least
+  # early_stopping_min_episodes have elapsed. The min_episodes floor is
+  # sized for DQN/QR-DQN/IQN's epsilon_decay_steps=50000 (~episode 128 to
+  # finish annealing at episode_len=390) — stopping earlier risks freezing
+  # a still-mostly-random policy. Deliberately conservative: RL learning
+  # curves can have long flat plateaus followed by late breakthroughs, a
+  # risk this can trade off against compute savings but not eliminate.
+  early_stopping:              false
+  early_stopping_patience:     6
+  early_stopping_min_delta:    0.05
+  early_stopping_min_episodes: 150
+  early_stopping_smooth_window: 3
 
 # ── Logging ───────────────────────────────────────────────────────────
 logging:

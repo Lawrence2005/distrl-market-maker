@@ -267,6 +267,17 @@ class SARSAAgent(AgentBase):
         self._steps  = 0
         self._updates = 0
 
+        # Routes training/rollout.py's run_episode() to this agent's own
+        # train_step(obs, action, reward, next_obs, done) path instead of
+        # the replay-buffer-style agent.observe()+agent.train_step() path
+        # used by DQN/QR-DQN/IQN. Without this, SARSA falls through to
+        # train_step() called with no arguments every step, which hits its
+        # `if obs is None: return None` guard and never updates weights at
+        # all — silently running on its randomly-initialized Q-surface for
+        # the entire training run (see mean_loss staying exactly 0.0 for
+        # every episode, which is how this was caught).
+        self.is_online = True
+
         # ── Tile codings ──────────────────────────────────────────────
         tc0_lo = _TC0_LO
         tc0_hi = _TC0_HI
@@ -492,12 +503,19 @@ class SARSAAgent(AgentBase):
         done:     bool,
     ) -> None:
         """
-        Store transition — increments step counter for epsilon decay.
+        No-op — exists only so generic code written against AgentBase's
+        observe()/train_step() pair doesn't break on a SARSAAgent.
 
-        SARSA update is performed in train_step() to match the interface
-        of neural agents.
+        Real training always dispatches through is_online (see
+        training/rollout.py's run_episode), which calls this agent's own
+        train_step(obs, action, reward, next_obs, done) directly and never
+        calls observe() at all. The step counter used for epsilon decay is
+        incremented in train_step() for exactly that reason — it used to
+        live here instead, which meant epsilon never decayed the whole time
+        is_online was unset (see the dispatch-bug fix above): observe() was
+        never called, so a counter that only observe() incremented stayed
+        at 0 for the agent's entire training history.
         """
-        self._steps += 1
 
     def train_step(
         self,
@@ -530,6 +548,8 @@ class SARSAAgent(AgentBase):
         """
         if obs is None:
             return None   # called without args — no-op
+
+        self._steps += 1   # drives epsilon decay — see observe()'s docstring
 
         # Active tiles for current state
         tiles = self._get_active_tiles(obs)

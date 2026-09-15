@@ -82,6 +82,14 @@ def load_agent(
     hidden_dim:   int = 128,
     n_quantiles:  int = 200,
     n_quantile_samples: int = 64,
+    embedding_dim: int = 64,
+    use_lstm:     bool = False,
+    # SARSA tile-coding kwargs (must match training config — n_tilings and
+    # memory_size determine the tile-hash range, not just array size, so a
+    # mismatch here causes out-of-bounds indexing, not just wrong weights)
+    n_tilings:    int = 32,
+    n_tiles:      int = 8,
+    memory_size:  int = 2 ** 17,
 ) -> tuple[Any, str]:
     """
     Load a trained agent from checkpoint.
@@ -103,6 +111,9 @@ def load_agent(
     hidden_dim    : int — LSTM hidden size (default 128)
     n_quantiles   : int — QR-DQN quantile atoms (default 200)
     n_quantile_samples : int — IQN quantile samples (default 64)
+    use_lstm      : bool — must match how the checkpoint was trained
+        (train.py's variant=recurrent → True, variant=null/snapshot → False,
+        the default here) — mismatching this raises a state_dict load error
 
     Returns
     -------
@@ -137,8 +148,11 @@ def load_agent(
     if agent_type == "sarsa":
         from agents.sarsa import SARSAAgent
         agent = SARSAAgent(
-            obs_dim   = obs_dim,
-            n_actions = n_actions,
+            obs_dim     = obs_dim,
+            n_actions   = n_actions,
+            n_tilings   = n_tilings,
+            n_tiles     = n_tiles,
+            memory_size = memory_size,
         )
         # Load SARSA weights from .npz
         data = np.load(str(checkpoint))
@@ -160,6 +174,7 @@ def load_agent(
             encoder    = encoder,
             n_actions  = n_actions,
             hidden_dim = hidden_dim,
+            use_lstm   = use_lstm,
             device     = device,
         )
 
@@ -170,6 +185,7 @@ def load_agent(
             n_actions   = n_actions,
             n_quantiles = n_quantiles,
             hidden_dim  = hidden_dim,
+            use_lstm    = use_lstm,
             device      = device,
         )
 
@@ -179,17 +195,20 @@ def load_agent(
             encoder            = encoder,
             n_actions          = n_actions,
             n_quantile_samples = n_quantile_samples,
+            embedding_dim      = embedding_dim,
             hidden_dim         = hidden_dim,
+            use_lstm           = use_lstm,
             device             = device,
         )
 
     elif agent_type == "ppo":
         from agents.ppo import PPOAgent
         agent = PPOAgent(
-            encoder   = encoder,
-            n_actions = n_actions,
+            encoder    = encoder,
+            n_actions  = n_actions,
             hidden_dim = hidden_dim,
-            device    = device,
+            use_lstm   = use_lstm,
+            device     = device,
         )
 
     else:

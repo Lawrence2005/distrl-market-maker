@@ -116,11 +116,12 @@ def compute_episode_metrics(
 
 
 def run_episode(
-    env:      LOBMarketMakingEnv,
-    agent:    Any,
-    enc_type: str,
-    training: bool = True,
-    seed:     Optional[int] = None,
+    env:                 LOBMarketMakingEnv,
+    agent:               Any,
+    enc_type:            str,
+    training:            bool = True,
+    seed:                Optional[int] = None,
+    train_every_n_steps: int = 1,
 ) -> dict:
     """
     Run one episode and return metrics.
@@ -132,6 +133,13 @@ def run_episode(
     enc_type : str  — encoder type for input extraction
     training : bool — if True, call agent.observe() and agent.train_step()
     seed     : int  — episode seed (None = use env default)
+    train_every_n_steps : int — for the DQN/QR-DQN/IQN branch (SARSA and PPO
+        are unaffected), only call agent.train_step() every Nth env step.
+        agent.observe() (and therefore replay-buffer storage, _steps count,
+        and epsilon decay) still runs every step regardless — this matches
+        Nature DQN's own update cadence (Mnih et al. 2015 store a transition
+        every frame but only run an SGD step every 4th), it isn't a
+        fidelity cut invented for this codebase.
 
     Returns
     -------
@@ -151,10 +159,12 @@ def run_episode(
     cum_pnl  = 0.0
     prev_mid = info["mid_price"]
     prev_inv = 0
+    step_idx = 0
 
     terminated = truncated = False
 
     while not (terminated or truncated):
+        step_idx += 1
         enc_input = get_encoder_input(obs, info, enc_type)
         if is_ppo:
             action, value, log_prob = agent.act_with_value(enc_input)
@@ -189,12 +199,14 @@ def run_episode(
                             terminated or truncated,
                             value=value, log_prob=log_prob)
             else:
-                # DQN/QR-DQN/IQN: buffer + per-step update
+                # DQN/QR-DQN/IQN: buffer every step, gradient update every
+                # train_every_n_steps-th step (see docstring above).
                 agent.observe(enc_input, action, reward, next_enc,
                             terminated or truncated)
-                loss = agent.train_step()
-                if loss is not None:
-                    losses.append(loss)
+                if step_idx % train_every_n_steps == 0:
+                    loss = agent.train_step()
+                    if loss is not None:
+                        losses.append(loss)
 
         obs      = next_obs
         info     = next_info
@@ -214,9 +226,12 @@ def run_episode(
     return metrics
 
 
-def save_checkpoint(agent, cfg: DictConfig, episode: int, metrics: dict, ckpt_dir: Path) -> Path:
+def save_checkpoint(
+    agent, cfg: DictConfig, episode: int, metrics: dict, ckpt_dir: Path,
+    tag_override: str | None = None,
+) -> Path:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    tag = f"ep{episode:05d}"
+    tag = tag_override or f"ep{episode:05d}"
 
     try:
         config_dict = OmegaConf.to_container(cfg, resolve=True)
@@ -254,6 +269,42 @@ def save_checkpoint(agent, cfg: DictConfig, episode: int, metrics: dict, ckpt_di
         }, path)
 
     return path
+
+
+def find_latest_checkpoint(ckpt_dir: Path) -> Optional[Path]:
+    """
+    Return the checkpoint for the highest episode number in ckpt_dir, or
+    None if it doesn't exist or has no checkpoints yet.
+
+    Used by train.py's resume path: sort by the numeric episode tag rather
+    than filename/mtime, since those aren't guaranteed stable across a
+    crash + restart.
+    """
+    ckpt_dir = Path(ckpt_dir)
+    if not ckpt_dir.exists():
+        return None
+
+    candidates = list(ckpt_dir.glob("ep*.pt")) + list(ckpt_dir.glob("ep*.npz"))
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda p: int(p.stem.replace("ep", "")))
+
+
+def find_best_checkpoint(ckpt_dir: Path) -> Optional[Path]:
+    """
+    Return the `best.pt`/`best.npz` checkpoint saved whenever eval Sharpe hit
+    a new high during training (see train.py), or None if it doesn't exist —
+    e.g. a run from before this tracking was added, or one that never
+    completed a single eval checkpoint. Falls back to find_latest_checkpoint
+    at the call site, not here, so callers can log which path was used.
+    """
+    ckpt_dir = Path(ckpt_dir)
+    for ext in ("pt", "npz"):
+        path = ckpt_dir / f"best.{ext}"
+        if path.exists():
+            return path
+    return None
 
 
 def load_checkpoint(agent, path):

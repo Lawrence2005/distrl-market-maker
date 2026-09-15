@@ -311,7 +311,12 @@ class QRDQNAgent(AgentBase):
         obs: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Full online network forward pass.
+        Online network forward: obs sequence -> Z(s,a) at the last step.
+
+        Only the last timestep is ever consumed by callers (train_step
+        only trains on the last transition of each sequence window), so
+        the head runs on (B, H) directly rather than (B*T, H) — mirrors
+        agents/iqn.py's _online_forward and this class's own act().
 
         Parameters
         ----------
@@ -319,22 +324,20 @@ class QRDQNAgent(AgentBase):
 
         Returns
         -------
-        Z : Tensor shape (B, T, n_actions, n_quantiles)
+        Z : Tensor shape (B, n_actions, n_quantiles)
         """
         lstm_out, _ = self.online_base.forward(obs)   # (B, T, hidden_dim)
-        B, T, H = lstm_out.shape
-        Z = self.online_head(lstm_out.reshape(B * T, H))  # (B*T, n_actions, N)
-        return Z.reshape(B, T, self.n_actions, self.n_quantiles)
+        h_last = lstm_out[:, -1, :]                    # (B, hidden_dim)
+        return self.online_head(h_last)                # (B, n_actions, N)
 
     def _target_forward(
         self,
         obs: torch.Tensor,
     ) -> torch.Tensor:
-        """Target network forward — no gradient."""
+        """Target network forward — no gradient. See _online_forward."""
         lstm_out, _ = self.target_base.forward(obs)
-        B, T, H = lstm_out.shape
-        Z = self.target_head(lstm_out.reshape(B * T, H))
-        return Z.reshape(B, T, self.n_actions, self.n_quantiles)
+        h_last = lstm_out[:, -1, :]
+        return self.target_head(h_last)
 
     # ------------------------------------------------------------------
     # CVaR action selection
@@ -498,8 +501,7 @@ class QRDQNAgent(AgentBase):
 
         # ── Online Z(s,a) at last step ────────────────────────────────
         self.online_base.reset_hidden(batch_size=B, device=self.device)
-        Z_all  = self._online_forward(obs)             # (B, T, n_actions, N)
-        Z_last = Z_all[:, -1, :, :]                    # (B, n_actions, N)
+        Z_last = self._online_forward(obs)              # (B, n_actions, N)
 
         # Gather quantiles for taken action
         a_last = actions[:, -1]                        # (B,)
@@ -509,12 +511,11 @@ class QRDQNAgent(AgentBase):
         # ── Target Z(s', a*) at last step ─────────────────────────────
         with torch.no_grad():
             self.target_base.reset_hidden(batch_size=B, device=self.device)
-            Z_next_all  = self._target_forward(next_obs)
-            Z_next_last = Z_next_all[:, -1, :, :]
+            Z_next_last = self._target_forward(next_obs)
 
             # Double DQN: greedy next action from online net
             self.online_base.reset_hidden(batch_size=B, device=self.device)
-            Z_online_next = self._online_forward(next_obs)[:, -1, :, :]
+            Z_online_next = self._online_forward(next_obs)
             a_next = Z_online_next.mean(dim=-1).argmax(dim=-1)
 
             a_next_idx = a_next.view(B, 1, 1).expand(B, 1, self.n_quantiles)

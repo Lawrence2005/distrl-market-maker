@@ -14,4 +14,12 @@ lambda_i:      [0.6, 0.1, 0.3]
 
 epsilon:       0.7
 epsilon_floor: 0.0001
-epsilon_T:     1000
+# Was 1000 (steps) — at episode_len=390 that fully anneals to greedy by
+# episode ~3, meaning SARSA got essentially zero exploration for 99.5% of
+# a 500-episode run. Almost certainly tuned for the tiny synthetic smoke
+# tests found earlier in this project (n_episodes=2, i.e. 780 steps total)
+# rather than real training. Matched to DQN/QR-DQN/IQN's
+# epsilon_decay_steps=50000 so all epsilon-greedy agents anneal over the
+# same ~128-episode (~26% of a 500-episode budget) window — also what
+# training.early_stopping_min_episodes=150 is calibrated against.
+epsilon_T:     50000
