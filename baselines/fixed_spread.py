@@ -32,21 +32,25 @@ Week 3 deliverable.
 
 import numpy as np
 from typing import Dict, Any
-from envs.lob_env import N_OFFSET_LEVELS
+from envs.lob_env import N_OFFSET_LEVELS, TICK_OFFSETS
 
 def _offset_to_idx(offset: int) -> int:
     """
-    Convert a tick offset integer to its index in TICK_OFFSETS.
+    Convert a desired tick offset to the nearest index in TICK_OFFSETS.
+
+    Looks up the nearest available level rather than assuming
+    TICK_OFFSETS[i] == i — that held when TICK_OFFSETS was contiguous
+    (0..10) but not once its spacing changed (0,10,...,100).
 
     Parameters
     ----------
-    offset : int — tick offset in {0, 1, ..., 10}
+    offset : int — desired tick offset from mid
 
     Returns
     -------
-    int — index into TICK_OFFSETS
+    int — index into TICK_OFFSETS of the closest available level
     """
-    return int(np.clip(offset, 0, N_OFFSET_LEVELS - 1))
+    return int(np.abs(TICK_OFFSETS - offset).argmin())
 
 
 class FixedSpreadBaseline:
@@ -62,17 +66,19 @@ class FixedSpreadBaseline:
     Parameters
     ----------
     half_spread_ticks : int
-        Half-spread in ticks.
-        Must be in [1, N_OFFSET_LEVELS - 1] to stay within the action space.
+        Desired half-spread in ticks — snapped to the nearest available
+        TICK_OFFSETS level by _offset_to_idx, not required to match one
+        exactly. Must be within [TICK_OFFSETS[0], TICK_OFFSETS[-1]].
     """
 
     name = "FixedSpread"
 
     def __init__(self, half_spread_ticks: int = 2
-                 
+
                  ):
-        assert 1 <= half_spread_ticks <= N_OFFSET_LEVELS - 1, (
-            f"half_spread_ticks must be in [1, {N_OFFSET_LEVELS - 1}], got {half_spread_ticks}"
+        assert TICK_OFFSETS[0] <= half_spread_ticks <= TICK_OFFSETS[-1], (
+            f"half_spread_ticks must be in [{TICK_OFFSETS[0]}, {TICK_OFFSETS[-1]}], "
+            f"got {half_spread_ticks}"
         )
 
         self.half_spread_ticks = half_spread_ticks

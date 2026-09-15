@@ -107,7 +107,9 @@ def _dollars_to_idx(offset_dollars: float, tick_size: float) -> int:
     """
     Convert a quote half-spread in dollars to a TICK_OFFSETS index.
 
-    With TICK_OFFSETS = np.arange(0, N), index == tick count directly.
+    Looks up the nearest available level in TICK_OFFSETS rather than
+    assuming TICK_OFFSETS[i] == i — that held when TICK_OFFSETS was
+    contiguous (0..10) but not once its spacing changed (0,10,...,100).
 
     Parameters
     ----------
@@ -116,10 +118,10 @@ def _dollars_to_idx(offset_dollars: float, tick_size: float) -> int:
 
     Returns
     -------
-    int -- index into TICK_OFFSETS, clamped to [0, N_OFFSET_LEVELS-1]
+    int -- index into TICK_OFFSETS of the closest available level
     """
-    ticks = int(round(abs(offset_dollars) / tick_size))
-    return int(np.clip(ticks, 0, _MAX_OFFSET))
+    ticks = abs(offset_dollars) / tick_size
+    return int(np.abs(TICK_OFFSETS - ticks).argmin())
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -392,7 +394,16 @@ class GLFTBaseline:
     xi          : float -- market-impact parameter (default 0.0)
     A           : float -- Poisson arrival rate scale (default 1.0)
     T           : int   -- episode length in steps (default 390)
-    Q_max       : int   -- inventory constraint (default 10)
+    Q_max       : int   -- inventory constraint, in lots (default 10). This
+        sizes the ODE grid ((2*Q_max+1)x(2*Q_max+1), solved via one expm
+        call per recompute) — kept small deliberately, independent of the
+        env's real per-share Q_max, which can be ~100x larger than a
+        tractable ODE grid size. See `lot_size`.
+    lot_size    : int   -- shares per inventory lot (default 100, matching
+        envs/lob_env.py's order_size). `act()` converts the env's real
+        per-share inventory into lots (inventory // lot_size) before
+        indexing into the Q_max-sized grid; quote_size stays whatever the
+        env's own order_size is — this class never submits orders itself.
     tick_size   : float -- dollar value of one tick (default 0.01)
     adapt_sigma : bool  -- update sigma from live price history (default True)
     """
@@ -408,6 +419,7 @@ class GLFTBaseline:
         A:           float = 1.0,
         T:           int   = 390,
         Q_max:       int   = 10,
+        lot_size:    int   = 100,
         tick_size:   float = 0.01,
         adapt_sigma: bool  = True,
     ):
@@ -418,6 +430,7 @@ class GLFTBaseline:
         assert A > 0,         f"A must be positive, got {A}"
         assert T > 0,         f"T must be positive, got {T}"
         assert Q_max > 0,     f"Q_max must be positive, got {Q_max}"
+        assert lot_size > 0,  f"lot_size must be positive, got {lot_size}"
         assert tick_size > 0, f"tick_size must be positive, got {tick_size}"
 
         self.gamma       = gamma
@@ -428,6 +441,7 @@ class GLFTBaseline:
         self.A           = A
         self.T           = T
         self.Q_max       = Q_max
+        self.lot_size    = lot_size
         self.tick_size   = tick_size
         self.adapt_sigma = adapt_sigma
 
@@ -525,9 +539,13 @@ class GLFTBaseline:
         db = delta_bid(v, q, self.Q_max, self.gamma, self.kappa, self.xi)
         da = delta_ask(v, q, self.Q_max, self.gamma, self.kappa, self.xi)
 
-        # At inventory boundary: fall back to max action-space offset
-        bid_price = mid - db if np.isfinite(db) else mid - _MAX_OFFSET * self.tick_size
-        ask_price = mid + da if np.isfinite(da) else mid + _MAX_OFFSET * self.tick_size
+        # At inventory boundary: fall back to max action-space offset.
+        # TICK_OFFSETS[-1] (a tick count), not _MAX_OFFSET (an index) —
+        # those coincided when TICK_OFFSETS was contiguous (0..10) but not
+        # once its spacing changed (0,10,...,100).
+        max_offset_dollars = TICK_OFFSETS[-1] * self.tick_size
+        bid_price = mid - db if np.isfinite(db) else mid - max_offset_dollars
+        ask_price = mid + da if np.isfinite(da) else mid + max_offset_dollars
 
         return bid_price, ask_price
 
@@ -548,14 +566,15 @@ class GLFTBaseline:
         -------
         np.ndarray shape (2,) -- [bid_idx, ask_idx] into TICK_OFFSETS
         """
-        mid       = float(info["mid_price"])
-        inventory = int(info["inventory"])
-        tau_hat   = max(float(self.T - self._t), 0.0) / self.T
+        mid            = float(info["mid_price"])
+        inventory      = int(info["inventory"])  # real shares, from the env
+        inventory_lots = int(round(inventory / self.lot_size))
+        tau_hat        = max(float(self.T - self._t), 0.0) / self.T
 
         if self.adapt_sigma:
             self._update_sigma(mid)
 
-        bid_price, ask_price = self.compute_quotes(mid, inventory, tau_hat)
+        bid_price, ask_price = self.compute_quotes(mid, inventory_lots, tau_hat)
 
         bid_idx = _dollars_to_idx(abs(bid_price - mid), self.tick_size)
         ask_idx = _dollars_to_idx(abs(ask_price - mid), self.tick_size)

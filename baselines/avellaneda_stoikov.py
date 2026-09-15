@@ -79,7 +79,9 @@ def _price_to_action_idx(
     """
     Convert an absolute quote price to a TICK_OFFSETS index.
 
-    With TICK_OFFSETS = np.arange(0, N), index == tick count from mid directly.
+    Looks up the nearest available level in TICK_OFFSETS rather than
+    assuming TICK_OFFSETS[i] == i — that held when TICK_OFFSETS was
+    contiguous (0..10) but not once its spacing changed (0,10,...,100).
 
     Parameters
     ----------
@@ -89,11 +91,11 @@ def _price_to_action_idx(
 
     Returns
     -------
-    int -- index into TICK_OFFSETS, clamped to [0, N_OFFSET_LEVELS-1]
+    int -- index into TICK_OFFSETS of the closest available level
     """
     offset_dollars = abs(quote_price - mid_price)
-    offset_ticks   = int(round(offset_dollars / tick_size))
-    return int(np.clip(offset_ticks, 0, N_OFFSET_LEVELS - 1))
+    offset_ticks   = offset_dollars / tick_size
+    return int(np.abs(TICK_OFFSETS - offset_ticks).argmin())
 
 
 class AvellanedaStoikovBaseline:

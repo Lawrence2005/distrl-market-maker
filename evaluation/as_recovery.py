@@ -231,27 +231,35 @@ def empirical_skew_curve(
     min_visits:      int = 5,
     boundary_buffer: int = 2,
     q_max:           int = 10,
+    lot_size:        int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute mean bid offset per inventory level from rollout data.
 
     Parameters
     ----------
-    inventories     : np.ndarray shape (N,)
+    inventories     : np.ndarray shape (N,) — real per-share inventory from the env
     bid_offsets     : np.ndarray shape (N,)
     min_visits      : minimum observations per level
     boundary_buffer : exclude levels within N of ±Q_max
-    q_max           : inventory constraint
+    q_max           : inventory constraint, in the same units as `lot_size`
+        converts inventories into (i.e. lots, not raw shares) — matches
+        GLFTBaseline's own small ODE-grid Q_max, not the env's real Q_max
+    lot_size        : shares per inventory lot (default 1 = no conversion,
+        for callers already passing lot-scale inventory). With the env's
+        real per-share Q_max now ~100x larger than a tractable ODE grid,
+        grouping by exact share count would almost never hit `min_visits`
+        — pass the env's order_size here to bucket by lot instead.
 
     Returns
     -------
-    (inv_levels, mean_offsets) : np.ndarray each shape (K,)
+    (inv_levels, mean_offsets) : np.ndarray each shape (K,), inv_levels in lots
     """
     groups = defaultdict(list)
     for inv, off in zip(inventories, bid_offsets):
-        inv = int(inv)
-        if abs(inv) <= q_max - boundary_buffer:
-            groups[inv].append(float(off))
+        inv_lots = int(round(int(inv) / lot_size))
+        if abs(inv_lots) <= q_max - boundary_buffer:
+            groups[inv_lots].append(float(off))
 
     inv_levels   = sorted(k for k in groups if len(groups[k]) >= min_visits)
     mean_offsets = np.array([np.mean(groups[k]) for k in inv_levels])
@@ -317,6 +325,7 @@ def run_recovery_analysis(
     xi:         float = 0.0,
     A:          float = 1.0,
     Q_max:      int   = 10,
+    lot_size:   int   = 100,
     T:          float = 390.0,
     tick_size:  float = 0.01,
     tau_hat:    float = 0.5,
@@ -339,7 +348,11 @@ def run_recovery_analysis(
     sigma       : float — volatility (log-return units)
     xi          : float — GLFT market-impact (0 = no impact)
     A           : float — Poisson arrival rate
-    Q_max       : int   — inventory constraint
+    Q_max       : int   — inventory constraint, in lots (matches
+        GLFTBaseline's own small ODE-grid Q_max, not the env's real Q_max)
+    lot_size    : int   — shares per lot (matches envs/lob_env.py's
+        order_size) — the env reports inventory in real shares; this
+        converts to the lot units Q_max/the theoretical curves use
     T           : float — episode length
     tick_size   : float — dollar per tick
     tau_hat     : float — time-to-go fraction for theoretical curves
@@ -364,7 +377,7 @@ def run_recovery_analysis(
 
     # Empirical curve
     inv_levels, emp_offsets = empirical_skew_curve(
-        inventories, bid_offsets, q_max=Q_max
+        inventories, bid_offsets, q_max=Q_max, lot_size=lot_size
     )
     print(f"  Inventory levels with data: {inv_levels}", flush=True)
 
