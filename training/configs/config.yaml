@@ -54,7 +54,7 @@ training:
                                 # pass training.train_every_n_steps=4 for a
                                 # ~4x training-time speedup on constrained
                                 # hardware without touching episode_len or the
-                                # Hawkes/background-agent calibration.
+                                # background-agent calibration.
   warmup_steps:        1000    # steps before first gradient update
   max_grad_norm:       10.0    # gradient clipping
 
@@ -84,8 +84,14 @@ logging:
   wandb_project:       distrl-market-maker
 
 # ── Hydra Configuration ───────────────────────────────────────────────
+# Hydra's own run-directory bookkeeping (.hydra/config.yaml, train.log) is
+# redundant with logs/<run_tag>/status.json — nothing in this codebase reads
+# it — so it's redirected outside the repo (/tmp) instead of accumulating
+# as outputs/<date>/<time>/ litter in the project directory. chdir:false
+# already keeps the actual training I/O (logs/, checkpoints/) at the
+# project root regardless of where this points.
 hydra:
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: /tmp/distrl-hydra-runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
   job:
     chdir: false    # ← keep cwd as project root
