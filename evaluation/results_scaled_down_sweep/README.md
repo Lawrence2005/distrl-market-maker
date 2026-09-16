@@ -41,22 +41,32 @@ inline in the dashboard build — see below).
 
 ## Key findings
 
-- **QR-DQN significantly beats GLFT (the strictest baseline) in `normal`**: held-out
-  mean Sharpe +2.76 vs. GLFT's -0.77 (paired *t*-test p<0.0001, Wilcoxon p=0.0001,
-  n=15). PPO also clears p<0.05 in the same regime (+0.14 vs -0.77, p=0.033/0.041).
-  Neither reaches significance in `low_vol`, where GLFT's tight calibrated quoting
-  (+1.43 held-out) isn't beaten by any RL agent.
-- Every other RL-agent/regime combination either underperforms GLFT or doesn't clear
-  significance with n=15 — see `significance_vs_glft.csv` for the full table.
-- **AS-recovery is weak-to-absent across the board** (best: DQN `normal` GLFT R²=0.81;
-  most agents R²<0.3 or insufficient distinct inventory levels visited) — none of
-  these agents robustly rediscovered analytical inventory-skew quoting.
+Numbers below are post-loss-scale-fix (see "Loss-scale fix" section) — the fix
+materially changed the picture, so treat this as the current, not historical, result.
+
+- **DQN and QR-DQN significantly beat GLFT in `normal`, by a wide margin**: QR-DQN's
+  held-out mean Sharpe is +4.39 vs. GLFT's -0.71 (paired *t*-test p<0.0001, n=15); DQN's
+  is +3.49 (p<0.0001) — DQN went from one of the worst performers pre-fix to the
+  second-best model overall, beating every baseline outright. PPO also clears p<0.05
+  in `normal` (+0.76, p=0.0045). IQN does not reach significance there (p=0.09).
+- **None of the 5 RL agents beat GLFT in `low_vol`** post-fix — all 5 are significantly
+  *below* GLFT there (GLFT and AS's held-out Sharpe, +1.34 and +1.59, remain strong and
+  uncontested). This regime got uniformly worse for RL agents after the fix; with only
+  one seed per agent it isn't possible to tell whether that's the fix's effect or
+  ordinary retraining variance — see "What this doesn't establish."
+- **AS-recovery improved for several agents** post-fix (DQN `low_vol` GLFT R²=0.64,
+  QR-DQN `low_vol` R²=0.85, IQN `normal` R²=0.61 — all now STRONG recovery, versus weak
+  or absent before) but the pattern isn't uniform: IQN `low_vol` and QR-DQN `normal`
+  now show *no* recovery despite the corresponding agent's strong held-out Sharpe in
+  QR-DQN `normal`'s case — held-out performance and AS-style skew recovery are
+  evidently measuring different things, not interchangeable indicators of "good policy."
+  Full table in `as_recovery.csv`.
 
 ## Bugs found and fixed during this sweep
 
 Two real bugs in `agents/sarsa.py` were caught while building the results dashboard,
-both now fixed (archived pre-fix results in `archive/sarsa_is_online_bug/` and
-`archive/sarsa_epsilon_bug/` — do not use):
+both now fixed (pre-fix results were archived locally then later cleared in a repo
+cleanup pass — not in git, not recoverable, don't go looking for them):
 
 1. **`SARSAAgent` never set `is_online`** (the attribute every other agent sets
    explicitly — see `agents/dqn.py`, `agents/ppo.py`, `agents/iqn.py`,
@@ -76,6 +86,36 @@ both now fixed (archived pre-fix results in `archive/sarsa_is_online_bug/` and
 Both fixes are one or two lines each in `agents/sarsa.py`, verified against real
 ABIDES rollouts and the full non-ABIDES test suite (549 passed) before SARSA was
 retrained a third time to produce the numbers in this directory.
+
+## Loss-scale fix (post-order_size, pre-existing miscalibration)
+
+A code-review audit (not a bug found via broken output — everything above ran and
+produced plausible-looking numbers) found that DQN/QR-DQN/IQN's Huber-loss threshold
+(`kappa`/`huber_beta`, hardcoded default 1.0) and PPO's `value_coef` (0.5) were never
+rescaled when `order_size` went from 1 to 100 shares (see the environment-fix commit) —
+even though the analogous quadratic-reward `lam` *was* rescaled for exactly this reason.
+Rewards and TD-errors now run roughly 100x larger, so these losses were spending
+training in the wrong regime: DQN/QR-DQN/IQN's Huber loss almost always in its linear
+tail rather than quadratic-near-zero, and PPO's plain-MSE value loss scaling
+quadratically with the mismatch while sharing a backbone with the policy head — a
+mechanistically plausible explanation for PPO's original weak showing.
+
+Fix: `kappa`/`huber_beta` rescaled 100x up (1.0 → 100.0), `value_coef` 100x down
+(0.5 → 0.005), wired through config (`training/configs/agent/{dqn,qrdqn,iqn,ppo}.yaml`)
+instead of hardcoded. All 4 affected agents (dqn, qrdqn, iqn, ppo — not sarsa, unaffected)
+were retrained from scratch on both regimes with the fix; pre-fix results were archived
+locally first, then cleared out in a later repo-cleanup pass (not in git either way) —
+the pre-fix numbers exist only in this project's own conversation history now, not on
+disk.
+
+**Effect was large and agent/regime-specific, not a uniform improvement**: QR-DQN and
+DQN's `normal`-regime held-out Sharpe roughly doubled (see Key Findings), while every
+agent's `low_vol` performance and IQN's performance in both regimes got worse. This
+asymmetry is itself informative — it suggests the original miscalibration was masking
+real differences between agents/regimes rather than applying a uniform penalty — but
+with single-seed runs on both sides of the fix, some of this could be ordinary
+retraining variance rather than the fix's effect. Re-running with multiple seeds (see
+"What this doesn't establish") would be needed to separate the two cleanly.
 
 ## What this doesn't establish
 
