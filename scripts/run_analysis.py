@@ -186,16 +186,20 @@ def run_model_comparison() -> pd.DataFrame:
     # with our naming pattern minus the alpha tag (2-episode dummy data, not
     # part of this sweep): qrdqn_handcrafted_asymmetric_flash_crash_seed42.
     keep_agents = {"sarsa", "dqn", "ppo", "qrdqn", "iqn", "fixedspread", "as", "glft"}
-    df = df[df["agent"].isin(keep_agents) & df["regime"].isin(["low", "normal"])]
+    df = df[df["agent"].isin(keep_agents) & df["regime"].isin(["low", "normal", "high"])]
     df = df[df["run_tag"] != "qrdqn_handcrafted_asymmetric_flash_crash_seed42"]
     print(df.to_string(index=False))
     return df
 
 
 if __name__ == "__main__":
-    as_recovery_low_vol_df = run_as_recovery("low_vol")
-    as_recovery_normal_df  = run_as_recovery("normal")
-    as_recovery_df = pd.concat([as_recovery_low_vol_df, as_recovery_normal_df], ignore_index=True)
+    as_recovery_low_vol_df  = run_as_recovery("low_vol")
+    as_recovery_normal_df   = run_as_recovery("normal")
+    as_recovery_high_vol_df = run_as_recovery("high_vol")
+    as_recovery_df = pd.concat(
+        [as_recovery_low_vol_df, as_recovery_normal_df, as_recovery_high_vol_df],
+        ignore_index=True,
+    )
     comparison_df  = run_model_comparison()
 
     out_dir = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"

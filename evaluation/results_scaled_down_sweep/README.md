@@ -1,4 +1,4 @@
-# Round 3 — scaled-down local sweep
+# Round 3–4 — scaled-down local sweep
 
 Results from the local (non-HPC) training sweep referenced in `evaluation/README.md`
 as the current Week 8 model-comparison deliverable. **This is not the full 17-variant
@@ -8,13 +8,18 @@ were never trained. Every result here uses `encoder=handcrafted` only. That larg
 ablation remains future work; it was explicitly descoped for local single-machine
 hardware (WSL, ~9.7GB RAM), not attempted and abandoned.
 
+Round 4 extended Round 3's low_vol/normal sweep with a third regime (`high_vol`),
+an out-of-distribution transfer test, and a simulator stylized-facts audit — see
+"Round 4 additions" below.
+
 ## Scope
 
 - **Agents:** sarsa, dqn, ppo, qrdqn, iqn (5) — the non-recurrent, handcrafted-encoder
   variant of each.
-- **Regimes:** low_vol, normal. `high_vol` and the megashock-based `flash_crash` were
-  run earlier in the project but dropped from scope (see git history and
-  `docs/design_decisions/README.md`); `trending` was removed at the same time.
+- **Regimes:** low_vol, normal, high_vol (all three, as of Round 4). The
+  megashock-based `flash_crash` was run earlier in the project but dropped from scope
+  (see git history and `docs/design_decisions/README.md`); `trending` was removed at
+  the same time.
 - **Baselines:** fixed-spread, Avellaneda-Stoikov, GLFT — fill-intensity-calibrated
   per regime against this exact ABIDES instance (`scripts/calibrate_fill_intensity.py`;
   calibration constants documented in `scripts/run_baseline.py`).
@@ -34,10 +39,17 @@ hardware (WSL, ~9.7GB RAM), not attempted and abandoned.
 | `holdout_eval.csv` | Per-episode raw results: every model (5 RL agents' best checkpoint + 3 baselines) run on **15 identical, never-before-seen seeds per regime** — `evaluation` seeds a fixed offset (`+80000`) clear of every training/eval/AS-recovery seed range used anywhere else. This is the fair, paired, head-to-head comparison. |
 | `holdout_summary.csv` | `holdout_eval.csv` aggregated to mean/std/n per model x regime. |
 | `significance_vs_glft.csv` | Paired *t*-test and Wilcoxon signed-rank test, each RL agent vs. GLFT, on the 15 shared holdout seeds (paired because both see identical seeds). |
+| `ood_transfer_episodes.csv` | Per-episode raw results: each agent's already-trained **low_vol** best checkpoint, rolled out greedily in the **high_vol** environment on 15 fresh seeds (`+90000` offset, disjoint from every other seed range used anywhere in this project). |
+| `ood_transfer_summary.csv` | Per-agent in-distribution (low_vol) vs. OOD (high_vol) held-out Sharpe, absolute Δ, and a percentage-degradation figure that's unstable near zero (see "Round 4 additions" below — use the absolute Δ). |
+| `stylized_facts.json` | 5-check stylized-facts audit (fat tails, volatility clustering, spread autocorrelation, price impact, queue-imbalance predictability) of the raw simulator under a random policy, once per regime. |
 
-Reproduce via `scripts/run_analysis.py` (AS-recovery + model comparison) and
-`scripts/run_holdout_eval.py --n_episodes 15` (holdout + significance table computed
-inline in the dashboard build — see below).
+Reproduce via `scripts/run_analysis.py` (AS-recovery + model comparison),
+`scripts/run_holdout_eval.py --n_episodes 15` (holdout eval, all 3 regimes),
+`scripts/run_significance_test.py` (paired significance vs. GLFT from holdout_eval.csv),
+`scripts/run_ood_transfer.py --n_episodes 15` (OOD transfer), and
+`scripts/run_stylized_facts.py` (simulator audit). `scripts/build_dashboard_data.py`
+assembles all of the above plus `logs/*/train_history.json` /`eval_history.json` into
+the dashboard's `viz_data.json`.
 
 ## Key findings
 
@@ -61,6 +73,45 @@ materially changed the picture, so treat this as the current, not historical, re
   QR-DQN `normal`'s case — held-out performance and AS-style skew recovery are
   evidently measuring different things, not interchangeable indicators of "good policy."
   Full table in `as_recovery.csv`.
+
+## Round 4 additions: high_vol, OOD transfer, stylized facts
+
+**high_vol held-out results** — DQN and IQN dominate this regime by a wide margin:
+held-out Sharpe +4.37 (DQN) and +4.63 (IQN), versus **every baseline strongly
+negative** (fixedspread -2.21, AS -1.84, GLFT -2.51). QR-DQN, PPO, and SARSA are all
+still negative in absolute terms (-0.16, -1.56, -1.59) but less negative than any
+baseline. The paired significance test reflects this: **all 5 RL agents clear
+p<0.05 against GLFT in high_vol** — but this is driven as much by GLFT performing
+unusually poorly in this regime as by the weaker RL agents doing well; a bare "5/5
+significant" headline overstates how strong QR-DQN/PPO/SARSA's high_vol policies
+actually are in absolute terms. DQN and IQN's wins are the real result here.
+
+**OOD transfer (low_vol-trained checkpoint → high_vol environment, no fine-tuning)**
+— every agent's already-weak low_vol held-out Sharpe (all within ±0.5 of zero
+post-kappa-fix) degrades further under the regime shift: IQN least (Δ≈-0.17),
+DQN (Δ≈-0.44), QR-DQN (Δ≈-0.78), SARSA (Δ≈-1.84), PPO most (Δ≈-2.49). This is a
+directional match to the original hypothesis that IQN's CVaR-tail training
+objective generalizes better than the others. The `degradation_pct` column in
+`ood_transfer_summary.csv` is included for reference but is not a reliable number —
+dividing by a near-zero in-distribution baseline produces numbers like PPO's
++68440%; use the absolute Δ instead. Also worth noting: **this OOD result cannot
+be cleanly separated from the fact that these agents' low_vol in-distribution
+performance is itself weak** — a policy that isn't doing much of anything in-sample
+has less "real" performance to lose out-of-sample, so a small absolute Δ isn't
+purely a generalization story.
+
+**Stylized facts** — the live ABIDES-Gym simulator passes 5 well-known microstructure
+regularities (fat tails, volatility clustering, spread autocorrelation, price impact,
+queue-imbalance predictability) under a random policy in all 3 regimes: normal and
+high_vol pass all 5; low_vol passes 4/5, failing only queue-imbalance predictability
+(the mildest of the 5 checks by design). Separately, and importantly: **real LOBSTER
+tick data was never used anywhere in this project.** `data/lobster/` has been empty
+for the project's entire duration (confirmed via `git log` — no commit ever added a
+file there), and `data/calibration/agent_params.json`'s originating commit is
+literally titled "w02: Synthetic data generated and processed" — it was fit from
+`data/synthetic/generate_synthetic_lobster.py`'s generator, not real exchange data.
+The stylized-facts checks above are the closest substitute available for that missing
+calibration step, not a replacement for it.
 
 ## Bugs found and fixed during this sweep
 
@@ -123,15 +174,21 @@ retraining variance rather than the fix's effect. Re-running with multiple seeds
   test (n=15 paired episodes) is real evidence within that one seed's trained policy,
   but doesn't rule out seed-to-seed variance in which policy training converges to.
 - **No CVaR alpha sensitivity.** QR-DQN/IQN were only ever trained at alpha=0.25.
-- **No `high_vol` regime.** Only low_vol/normal are covered here.
 - **No encoder/recurrent ablation.** See the top-of-file note — this is the
   handcrafted-snapshot slice of the full 17-variant design, not the full ablation.
+- **OOD transfer is one direction only, one seed.** Only low_vol→high_vol was tested
+  (not normal→high_vol, high_vol→low_vol, etc.), and like everything else here, only
+  at seed=42 — no replication to confirm the IQN/PPO generalization ranking holds
+  under a different training seed.
 
 ## Dashboard
 
 An interactive visualization of all of the above (training/eval curves, loss curves,
-peak-vs-final drift analysis, the held-out comparison, AS-recovery, and this
-significance table) was built as a Claude artifact during this sweep — ask in a
-Claude Code session with access to this project's conversation history, or rebuild it
-from `evaluation/results_scaled_down_sweep/*.csv` and `logs/*/train_history.json` /
-`eval_history.json`.
+peak-vs-final drift analysis, the held-out comparison, AS-recovery, significance
+table, OOD transfer, and the stylized-facts audit) was built as a Claude artifact
+during this sweep and is kept up to date in place rather than re-published as a new
+link — ask in a Claude Code session with access to this project's conversation
+history for the current URL, or rebuild it via `scripts/build_dashboard_data.py`
+(assembles `viz_data.json` from `evaluation/results_scaled_down_sweep/*.csv`,
+`stylized_facts.json`, and `logs/*/train_history.json` / `eval_history.json`) and the
+dashboard HTML template.

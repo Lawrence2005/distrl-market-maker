@@ -21,6 +21,8 @@ data/lobster/
 *.csv
 *.parquet
 *.h5
+evaluation/results_scaled_down_sweep/viz_data.json
+evaluation/results_scaled_down_sweep/stylized_facts.json
 
 # Model weights (large — track with git-lfs or W&B artifacts)
 *.pt

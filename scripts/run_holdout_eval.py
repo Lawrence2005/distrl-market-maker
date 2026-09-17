@@ -124,7 +124,7 @@ def run_regime(regime: str, n_episodes: int, holdout_seeds: list[int]) -> list[d
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--n_episodes", type=int, default=15)
-    p.add_argument("--regimes", nargs="+", default=["low_vol", "normal"])
+    p.add_argument("--regimes", nargs="+", default=["low_vol", "normal", "high_vol"])
     args = p.parse_args()
 
     holdout_seeds = [BASE_SEED + HOLDOUT_OFFSET + i for i in range(args.n_episodes)]
