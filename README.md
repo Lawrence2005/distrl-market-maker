@@ -58,6 +58,13 @@ pip install -r requirements.txt
 ## Key Results
 *(populated as project progresses)*
 
+## Future Work
+
+Neither item below invalidates the current results — both would enrich/strengthen them further:
+
+- **Re-run the same ablations and simulations at ABIDES's original, larger background-agent population.** The current sweep runs on a scaled-down `rmsc04` config (`abides-jpmc-public/abides-markets/abides_markets/configs/rmsc04.py`'s `build_config()` defaults ~23 background agents, vs. the reference spec documented in that same file's header — ~1,117 agents: 1000 noise, 102 value, 12 momentum), chosen for tractability on local single-machine hardware (WSL, ~9.7GB RAM). Re-running at the original scale would test whether current findings hold under a denser, more realistic market population, at the cost of substantially longer simulation time (ABIDES is a discrete-event simulator, so wall-clock cost scales with agent count/wakeup volume).
+- **Re-run on real historic LOBSTER tick data**, once obtained. Every result in this project runs on ABIDES's own synthetic `rmsc04` order flow — real LOBSTER data was never obtained, and this project's own synthetic-LOBSTER calibration pipeline was archived (see `archive/lobster_calibration/`) after being found unwired into the live simulator. Validating the same agents/ablations against a simulator actually calibrated to real historical market data would make the empirical claims here meaningfully more robust.
+
 ## References
 See [`docs/literature/`](docs/literature/) for annotated bibliography.
 See [`experiments/`](experiments/) for all run configs and results.
