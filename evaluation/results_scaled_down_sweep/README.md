@@ -107,11 +107,13 @@ high_vol pass all 5; low_vol passes 4/5, failing only queue-imbalance predictabi
 (the mildest of the 5 checks by design). Separately, and importantly: **real LOBSTER
 tick data was never used anywhere in this project.** `data/lobster/` has been empty
 for the project's entire duration (confirmed via `git log` — no commit ever added a
-file there), and `data/calibration/agent_params.json`'s originating commit is
-literally titled "w02: Synthetic data generated and processed" — it was fit from
-`data/synthetic/generate_synthetic_lobster.py`'s generator, not real exchange data.
-The stylized-facts checks above are the closest substitute available for that missing
-calibration step, not a replacement for it.
+file there), and the project's own background-agent calibration parameters (fit from
+a synthetic-LOBSTER generator, not real exchange data — originating commit literally
+titled "w02: Synthetic data generated and processed") were never consumed by the live
+simulator either, which uses ABIDES's own rmsc04 background config unmodified; that
+whole calibration pipeline has since been archived to `archive/lobster_calibration/`.
+The stylized-facts checks above are the closest substitute available for the
+calibration step that never happened, not a replacement for it.
 
 ## Bugs found and fixed during this sweep
 

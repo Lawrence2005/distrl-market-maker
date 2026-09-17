@@ -1,13 +1,8 @@
-# data/ — Market Data and Calibration
+# data/ — Market Data
 
 ## Structure
 ```
 data/
-├── synthetic/
-│   ├── generate_synthetic_lobster.py
-│   ├── configs/
-│   │   └── synthetic_params.yaml
-│   └── generated/                    ← gitignored
 ├── crypto/
 │   ├── fetch_binance_lob.py
 │   ├── configs/
@@ -15,12 +10,16 @@ data/
 │   └── raw/                          ← gitignored
 ├── lobster/                          ← gitignored when data arrives
 │   └── README.md                     ← instructions for obtaining LOBSTER data
-├── calibration/
-│   └── agent_params.json
 ├── processed/
 │   └── lob_snapshots.npy             ← gitignored, AE pre-training input
-└── process_lobster.py                ← handles all three sources via --data_dir
+└── process_lobster.py                ← handles both sources via --data_dir
 ```
+
+This project's own synthetic-LOBSTER-data generator and the background-agent
+calibration pipeline it fed (`data/synthetic/`, `data/calibration/`) were
+archived — those calibrated parameters were never consumed by the live
+simulator, which uses ABIDES's own `rmsc04` background config unmodified.
+See `archive/lobster_calibration/` if reviving that pipeline.
 
 ## LOBSTER Data
 LOBSTER data must be obtained separately from lobsterdata.com.

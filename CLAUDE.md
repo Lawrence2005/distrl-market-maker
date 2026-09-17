@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A 10-week research project building a distributional RL market maker (QR-DQN, IQN with CVaR tail-risk objectives) evaluated against classical analytical benchmarks (Avellaneda-Stoikov, GLFT) across market regimes, inside an ABIDES-Gym limit-order-book simulator calibrated to LOBSTER tick data.
+A 10-week research project building a distributional RL market maker (QR-DQN, IQN with CVaR tail-risk objectives) evaluated against classical analytical benchmarks (Avellaneda-Stoikov, GLFT) across market regimes, inside an ABIDES-Gym limit-order-book simulator (ABIDES's own `rmsc04` background-agent config, unmodified).
 
 The full week-by-week research plan, literature justification, and success criteria live in `README.md` — read it before making design decisions, since architectural choices here are usually driven by a specific cited paper (Spooner 2018, Sun 2022, Ganesh 2019, Dabney et al., Guéant et al., etc.), not just engineering preference. `docs/mdp_formulation.md` and `docs/evaluation_framework.md` hold the finalized MDP spec and metric definitions.
 
@@ -57,7 +57,7 @@ Training config is Hydra-based (`training/configs/config.yaml`), composed from g
 
 **Data/control flow:** `envs/` (simulator) → `encoders/` (state representation) → `agents/` (policy/value learning, optionally wrapped by `agents/cvar_policy.py`) → `training/train.py` (drives episodes, logs, checkpoints) → `evaluation/` (metrics, ablations, plots) consumed by `experiments/<run_name>/`.
 
-- **`envs/`** — ABIDES-Gym extensions. `lob_env.py` is the base `LOBMarketMakingEnv` (MultiDiscrete bid/ask tick-offset action space, three reward formulations: asymmetric-η / quadratic-λ / sparse). `background_agents.py` supplies LOBSTER-calibrated noise/momentum/informed traders. `multi_agent_env.py` runs N simultaneous MM agents. `stylized_facts.py` validates simulator realism post-episode.
+- **`envs/`** — ABIDES-Gym extensions. `lob_env.py` is the base `LOBMarketMakingEnv` (MultiDiscrete bid/ask tick-offset action space, three reward formulations: asymmetric-η / quadratic-λ / sparse). Background agent population comes from ABIDES's own `rmsc04` config, unmodified. `multi_agent_env.py` runs N simultaneous MM agents. `stylized_facts.py` validates simulator realism post-episode.
 
 - **`encoders/`** — three interchangeable *snapshot* (non-temporal) state representations sharing one interface (`encoder.encode(obs) -> torch.Tensor`): `handcrafted.py` (~17-dim feature vector), `cnn.py` (Conv1D over LOB depth), `autoencoder.py` (unsupervised-pretrained, frozen at RL-train time — pretrain via `training/pretrain_ae.py` first). Any neural agent selects one via `encoder=` config.
 
@@ -67,7 +67,7 @@ Training config is Hydra-based (`training/configs/config.yaml`), composed from g
 
 - **`baselines/`** — non-RL analytical benchmarks in an explicit lineage: `fixed_spread.py` → `avellaneda_stoikov.py` (AS 2008 closed-form) → `glft.py` (Guéant-Lehalle-Fernandez-Tapia 2012, with FOIC and LIIC variants, hard inventory limits). RL agents are expected to beat GLFT specifically, since it's the strictest/most-cited reference; AS-recovery (an RL agent rediscovering AS-like inventory skew in the low-vol regime) is used as a sanity check, not a target to beat.
 
-- **`data/`** — LOBSTER tick data is the calibration ground truth but is not checked in (must be obtained from lobsterdata.com and placed in `data/lobster/`, gitignored). `synthetic/` and `crypto/` provide alternative data sources when LOBSTER isn't available; `process_lobster.py` handles all three sources via `--data_dir`. `calibration/` holds fitted background-agent parameters consumed by `envs/`.
+- **`data/`** — LOBSTER tick data is not checked in (must be obtained from lobsterdata.com and placed in `data/lobster/`, gitignored). `crypto/` provides an alternative real-data source; `process_lobster.py` handles either via `--data_dir`, producing LOB depth snapshots for AE pre-training (`encoders/autoencoder.py`). This project's own synthetic-LOBSTER generator and the background-agent calibration pipeline it fed were archived — see `archive/lobster_calibration/`.
 
 - **`evaluation/`** — `metrics.py` (Sharpe, MAP, CVaR, MDD, PnLMAP, etc.), `as_recovery.py` (fits agent quote-skew against the AS/GLFT closed form, reports R²), `efficient_frontier.py` (mean P&L vs CVaR across the α-sweep), `ablation.py` (encoder × agent ablation tables), `visualize.py`.
 

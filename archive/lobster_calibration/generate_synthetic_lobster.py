@@ -1,5 +1,7 @@
 """
-data/synthetic/generate_synthetic_lobster.py
+archive/lobster_calibration/generate_synthetic_lobster.py — archived, never wired
+into the live simulator (see archive/lobster_calibration/ for the rest of this
+calibration pipeline).
 
 Generates synthetic LOB data in LOBSTER format:
   - {symbol}_{date}_34200000_57600000_message_{levels}.csv
@@ -10,8 +12,8 @@ Order arrivals follow a Hawkes process (Bacry et al. 2015).
 Fill intensities follow exponential decay with distance (AS 2008).
 
 Usage:
-    python data/synthetic/generate_synthetic_lobster.py
-    python data/synthetic/generate_synthetic_lobster.py --sigma 0.002 --n_levels 10
+    python archive/lobster_calibration/generate_synthetic_lobster.py
+    python archive/lobster_calibration/generate_synthetic_lobster.py --sigma 0.002 --n_levels 10
 """
 
 import numpy as np
@@ -157,7 +159,7 @@ def generate_synthetic_lobster(
     n_levels:   int   = 10,
     T_seconds:  float = 23400.0,   # 6.5 trading hours
     seed:       int   = 42,
-    output_dir: str   = "data/synthetic/generated",
+    output_dir: str   = "archive/lobster_calibration/generated",
 ):
     """
     Full synthetic LOBSTER data generator.

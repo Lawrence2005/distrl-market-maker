@@ -1,12 +1,14 @@
 """
-envs/background_agents.py
+archive/lobster_calibration/background_agents.py
 
-NOTE (post-Week-2 revision): This module is NOT integrated with lob_env.py.
-Background agent population is provided by rmsc04 (ABIDES built-in config),
-which supplies equivalent noise/momentum/informed traders wired to the
-ABIDES exchange. This file documents the intended agent design and calibration
-logic; it would be the starting point for a custom ABIDES config if rmsc04
-is replaced in a future experiment.
+Archived — never wired into the live simulator. Background agent
+population is provided by rmsc04 (ABIDES built-in config), which supplies
+equivalent noise/momentum/informed traders wired to the ABIDES exchange.
+This file documents the intended agent design and calibration logic; it
+would be the starting point for a custom ABIDES config if rmsc04 is
+replaced in a future experiment. See archive/lobster_calibration/ for the
+rest of this pipeline (the synthetic-data generator, calibration-parameter
+computation, and last-computed agent_params.json).
 """
 
 import numpy as np
@@ -14,7 +16,7 @@ import json
 from typing import Optional
 
 
-def load_agent_params(params_path: str = "data/calibration/agent_params.json") -> dict:
+def load_agent_params(params_path: str = "archive/lobster_calibration/agent_params.json") -> dict:
     """
     Load calibrated background agent parameters from JSON.
 

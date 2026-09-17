@@ -4,119 +4,33 @@ LOBSTER data processing script.
 Reads raw LOBSTER message + orderbook files.
 Outputs:
   - LOB snapshot tensors for AE pre-training
-  - Background agent parameters (agent_params.json)
   - Stylized facts summary for simulator validation
 
 Week 2 deliverable.
+
+(This project's own background-agent calibration pipeline — which used to
+compute NoiseAgent/MomentumAgent/InformedAgent parameters from this same
+message data — was archived: those custom agent classes were never wired
+into the live simulator, which uses ABIDES's own rmsc04 background config
+unmodified. See `archive/lobster_calibration/` if reviving that pipeline.)
 """
 import pandas as pd
 import numpy as np
-import json
 from pathlib import Path
-
-def compute_agent_params(all_messages: pd.DataFrame) -> dict:
-    """
-    Compute background agent calibration parameters from message file data.
-
-    These parameters are used to configure the three background agent types
-    in ABIDES-Gym (noise, momentum, informed) so their behaviour matches
-    the empirical distribution of order flow observed in the data.
-
-    Parameters derived:
-      - arrival_rate_per_sec : mean number of order events per second
-                               (used to set noise trader Poisson rate)
-      - mean_order_size      : mean number of shares per order
-      - std_order_size       : standard deviation of order sizes
-      - cancellation_rate    : fraction of events that are cancellations
-                               (type 2 or 3) — used to set cancel probability
-      - buy_sell_ratio       : fraction of events on the buy side (direction=1)
-                               vs sell side (direction=-1)
-      - mean_interarrival_sec: mean time between consecutive events in seconds
-
-    Parameters
-    ----------
-    all_messages : pd.DataFrame — concatenated message file rows across all
-                                  processed files, with columns:
-                                  Time, Type, OrderID, Size, Price, Direction
-
-    Returns
-    -------
-    dict of calibration parameters consumed by envs/background_agents.py
-    """
-    total_time = all_messages["Time"].max() - all_messages["Time"].min()
-    n_events   = len(all_messages)
-
-    # Arrival rate
-    arrival_rate = n_events / total_time if total_time > 0 else 1.0
-
-    # Order size distribution
-    mean_size = float(all_messages["Size"].mean())
-    std_size  = float(all_messages["Size"].std())
-    min_size  = int(all_messages["Size"].min())
-    max_size  = int(all_messages["Size"].max())
-
-    # Cancellation rate: event types 2 (partial cancel) and 3 (full cancel)
-    cancel_mask      = all_messages["Type"].isin([2, 3])
-    cancellation_rate = float(cancel_mask.sum() / n_events)
-
-    # Execution rate: event types 4 and 5
-    exec_mask      = all_messages["Type"].isin([4, 5])
-    execution_rate = float(exec_mask.sum() / n_events)
-
-    # Buy/sell ratio
-    buy_mask      = all_messages["Direction"] == 1
-    buy_sell_ratio = float(buy_mask.sum() / n_events)
-
-    # Interarrival times
-    interarrival = all_messages["Time"].diff().dropna()
-    mean_interarrival = float(interarrival.mean())
-    std_interarrival  = float(interarrival.std())
-
-    params = {
-        # Used by NoiseAgent in envs/background_agents.py
-        "arrival_rate_per_sec":  float(arrival_rate),
-        "mean_interarrival_sec": mean_interarrival,
-        "std_interarrival_sec":  std_interarrival,
-
-        # Used by all agent types for order sizing
-        "mean_order_size": mean_size,
-        "std_order_size":  std_size,
-        "min_order_size":  min_size,
-        "max_order_size":  max_size,
-
-        # Used by NoiseAgent and MomentumAgent
-        "cancellation_rate": cancellation_rate,
-        "execution_rate":    execution_rate,
-        "buy_sell_ratio":    buy_sell_ratio,
-
-        # Metadata
-        "n_events":      n_events,
-        "total_time_sec": float(total_time),
-    }
-
-    print(f"  Arrival rate:     {arrival_rate:.3f} events/sec")
-    print(f"  Mean order size:  {mean_size:.1f} shares")
-    print(f"  Cancel rate:      {cancellation_rate:.3f}")
-    print(f"  Buy/sell ratio:   {buy_sell_ratio:.3f}")
-
-    return params
 
 def process_lobster_directory(
     data_dir:         str,
     n_levels:         int = 10,
     output_snapshots: str = "data/processed/lob_snapshots.npy",
-    output_agents:    str = "data/calibration/agent_params.json",
-) -> tuple[np.ndarray, dict]:
+) -> np.ndarray:
     """
     Reads all message + orderbook CSV pairs in data_dir.
     Works identically on:
-        data/synthetic/generated/   ← synthetic data
         data/crypto/raw/            ← Binance crypto data
         data/lobster/               ← real LOBSTER equity data
     """
-    # Ensure output directories exist
+    # Ensure output directory exists
     Path(output_snapshots).parent.mkdir(parents=True, exist_ok=True)
-    Path(output_agents).parent.mkdir(parents=True, exist_ok=True)
 
     # Find all message files
     message_files = sorted(Path(data_dir).glob(f"*_message_{n_levels}.csv"))
@@ -125,14 +39,14 @@ def process_lobster_directory(
         raise FileNotFoundError(
             f"No message files found in {data_dir} matching "
             f"*_message_{n_levels}.csv. "
-            f"Run data/synthetic/generate_synthetic_lobster.py first, or "
-            f"check that your n_levels={n_levels} matches the files."
+            f"Run data/crypto/fetch_binance_lob.py first, or place real "
+            f"LOBSTER files in data/lobster/, or check that your "
+            f"n_levels={n_levels} matches the files."
         )
 
     print(f"Found {len(message_files)} message file(s) in {data_dir}")
 
     all_snapshots  = []
-    all_messages   = []
 
     for msg_path in message_files:
         ob_path = str(msg_path).replace("_message_", "_orderbook_")
@@ -171,10 +85,7 @@ def process_lobster_directory(
 
         all_snapshots.append(snapshots)
 
-        # ── Collect message rows for agent parameter calibration ────────
-        all_messages.append(msg)
-
-    if not all_snapshots or not all_messages:
+    if not all_snapshots:
         raise FileNotFoundError(
             "No valid message/orderbook pairs were processed."
         )
@@ -186,29 +97,21 @@ def process_lobster_directory(
     print(f"  Snapshot shape: {snapshots_arr.shape}  "
           f"(each row = {snapshots_arr.shape[1]}-dim depth profile)")
 
-    # ── Compute and save agent calibration parameters ───────────────────
-    print("\nComputing background agent calibration parameters...")
-    combined_messages = pd.concat(all_messages, ignore_index=True)
-    agent_params = compute_agent_params(combined_messages)
-    with open(output_agents, "w") as f:
-        json.dump(agent_params, f, indent=2)
-    print(f"Saved agent params → {output_agents}")
-
-    return snapshots_arr, agent_params
+    return snapshots_arr
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Process LOB data (synthetic, crypto, or real LOBSTER) "
-                    "into calibration parameters and AE pre-training snapshots."
+        description="Process LOB data (crypto or real LOBSTER) into "
+                    "AE pre-training snapshots."
     )
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="data/synthetic/generated",
+        default="data/crypto/raw",
         help="Path to directory containing message + orderbook CSV pairs. "
-             "Works with: data/synthetic/generated/, data/crypto/raw/, data/lobster/"
+             "Works with: data/crypto/raw/, data/lobster/"
     )
     parser.add_argument(
         "--n_levels",
@@ -223,23 +126,13 @@ if __name__ == "__main__":
         default="data/processed/lob_snapshots.npy",
         help="Where to save the processed LOB snapshot array for AE pre-training."
     )
-    parser.add_argument(
-        "--output_agents",
-        type=str,
-        default="data/calibration/agent_params.json",
-        help="Where to save the background agent calibration parameters JSON."
-    )
     args = parser.parse_args()
 
-    snapshots, agent_params = process_lobster_directory(
+    snapshots = process_lobster_directory(
         data_dir=args.data_dir,
         n_levels=args.n_levels,
         output_snapshots=args.output_snapshots,
-        output_agents=args.output_agents,
     )
 
     print("\n=== process_lobster.py complete ===")
     print(f"  LOB snapshots : {snapshots.shape} → {args.output_snapshots}")
-    print(f"  Agent params  : arrival_rate={agent_params['arrival_rate_per_sec']:.3f} "
-          f"events/sec, mean_size={agent_params['mean_order_size']:.1f}")
-    print(f"  Outputs saved : {args.output_agents}")
