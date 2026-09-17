@@ -4,9 +4,7 @@ tests/test_process_lobster.py
 Tests for data/process_lobster.py's process_lobster_directory error handling.
 (compute_agent_params and its tests were archived alongside the rest of the
 background-agent calibration pipeline — see
-archive/lobster_calibration/test_compute_agent_params.py. Hawkes-specific
-tests were archived separately alongside envs/hawkes_arrivals.py — see
-archive/hawkes/test_hawkes.py.)
+archive/lobster_calibration/test_compute_agent_params.py.)
 
 Run with:
     python -m pytest tests/test_process_lobster.py -v
