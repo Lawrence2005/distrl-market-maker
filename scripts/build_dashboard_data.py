@@ -126,6 +126,9 @@ def build() -> dict:
         "significance_vs_glft": csv_records(RESULTS_DIR / "significance_vs_glft.csv"),
         "ood_transfer_episodes": csv_records(RESULTS_DIR / "ood_transfer_episodes.csv"),
         "ood_transfer_summary": csv_records(RESULTS_DIR / "ood_transfer_summary.csv"),
+        "cvar_efficient_frontier": csv_records(RESULTS_DIR / "cvar_efficient_frontier.csv"),
+        "encoder_ablation_summary": csv_records(RESULTS_DIR / "encoder_ablation_summary.csv"),
+        "encoder_ablation_significance": csv_records(RESULTS_DIR / "encoder_ablation_significance.csv"),
     }
     stylized_path = RESULTS_DIR / "stylized_facts.json"
     data["stylized_facts"] = load_json(stylized_path) if stylized_path.exists() else {}

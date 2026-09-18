@@ -1,0 +1,16 @@
+/home/lawre/distrl-logs/qrdqn_autoencoder_normal_seed42.out
+agent=qrdqn
+encoder=autoencoder
+encoder.pretrained_weights=checkpoints/ae_encoder_32.pt
+encoder.latent_dim=32
+reward=asymmetric
+env.regime=normal
+env.use_abides=true
+training.n_episodes=500
+training.train_every_n_steps=4
+training.checkpoint_every=25
+training.eval_every=25
+training.eval_episodes=3
+alpha=0.25
+seed=42
+training.early_stopping=true

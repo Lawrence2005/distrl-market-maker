@@ -1,16 +1,18 @@
 # Round 3–4 — scaled-down local sweep
 
 Results from the local (non-HPC) training sweep referenced in `evaluation/README.md`
-as the current Week 8 model-comparison deliverable. **This is not the full 17-variant
-state-representation ablation** described in the top-level `README.md` (Week 4/5/8) —
-CNN and autoencoder encoders and all four recurrent (LSTM-integrated) agent variants
-were never trained. Every result here uses `encoder=handcrafted` only. That larger
+as the current Week 8 model-comparison deliverable. **This is still not the full
+17-variant state-representation ablation** described in the top-level `README.md`
+(Week 4/5/8) — Round 4 added a 3-encoder QR-DQN slice (cnn, autoencoder, recurrent,
+all `normal` regime only, see "CVaR sweep and encoder ablation" below) but the other
+4 agents' recurrent variants and the full 17-cell grid remain untrained. That larger
 ablation remains future work; it was explicitly descoped for local single-machine
 hardware (WSL, ~9.7GB RAM), not attempted and abandoned.
 
-Round 4 extended Round 3's low_vol/normal sweep with a third regime (`high_vol`),
-an out-of-distribution transfer test, and a simulator stylized-facts audit — see
-"Round 4 additions" below.
+Round 4 extended Round 3's low_vol/normal sweep with a third regime (`high_vol`), an
+out-of-distribution transfer test, a simulator stylized-facts audit, a CVaR alpha
+sweep, and an encoder ablation slice — see "Round 4 additions" and "CVaR sweep and
+encoder ablation" below.
 
 ## Scope
 
@@ -25,7 +27,11 @@ an out-of-distribution transfer test, and a simulator stylized-facts audit — s
   calibration constants documented in `scripts/run_baseline.py`).
 - **Seed:** 42 only, everywhere. No multi-seed replication — see "What this doesn't
   establish" below.
-- **CVaR alpha:** fixed at 0.25 for QR-DQN/IQN throughout. No alpha sweep was run.
+- **CVaR alpha:** 0.25 throughout for the main sweep; Round 4 added a full sweep
+  (α ∈ {0.05, 0.10, 0.25, 0.50, 1.0}) for QR-DQN and IQN, `normal` regime only — see
+  "CVaR sweep and encoder ablation" below.
+- **Encoder:** `handcrafted` throughout the main sweep; Round 4 added QR-DQN ×
+  {cnn, autoencoder, recurrent} at α=0.25, `normal` regime only — see below.
 - **Training:** 500-episode budget, patience-based early stopping on smoothed eval
   Sharpe (patience=6 checkpoints, min_delta=0.05, smoothed over the last 3 checkpoints,
   no stopping before episode 150 — see `training/train.py`'s `_early_stop_state`).
@@ -42,14 +48,23 @@ an out-of-distribution transfer test, and a simulator stylized-facts audit — s
 | `ood_transfer_episodes.csv` | Per-episode raw results: each agent's already-trained **low_vol** best checkpoint, rolled out greedily in the **high_vol** environment on 15 fresh seeds (`+90000` offset, disjoint from every other seed range used anywhere in this project). |
 | `ood_transfer_summary.csv` | Per-agent in-distribution (low_vol) vs. OOD (high_vol) held-out Sharpe, absolute Δ, and a percentage-degradation figure that's unstable near zero (see "Round 4 additions" below — use the absolute Δ). |
 | `stylized_facts.json` | 5-check stylized-facts audit (fat tails, volatility clustering, spread autocorrelation, price impact, queue-imbalance predictability) of the raw simulator under a random policy, once per regime. |
+| `cvar_sweep_holdout.csv` | Per-episode held-out results for QR-DQN + IQN at α ∈ {0.05, 0.10, 0.50, 1.0} (α=0.25 pulled in from `holdout_eval.csv`, same seed block), `normal` regime. |
+| `cvar_sweep_as_recovery.csv` | AS-recovery R² for QR-DQN + IQN at all 5 α values. |
+| `cvar_efficient_frontier.csv` | Mean held-out P&L and CVaR₀.₁₀ per agent × α, computed directly from `cvar_sweep_holdout.csv` (not from in-sample train/eval history). |
+| `encoder_ablation_holdout.csv` | Per-episode held-out results for QR-DQN with cnn/autoencoder/recurrent encoders at α=0.25 (handcrafted pulled in from `holdout_eval.csv`, same seed block), `normal` regime. |
+| `encoder_ablation_as_recovery.csv` | AS-recovery R² for the 3 new encoders. |
+| `encoder_ablation_significance.csv` | Paired *t*-test/Wilcoxon of each new encoder vs. handcrafted QR-DQN, same 15 shared seeds. |
+| `encoder_ablation_summary.csv` | Held-out Sharpe mean/std per encoder (4 rows: handcrafted + 3 new). |
 
 Reproduce via `scripts/run_analysis.py` (AS-recovery + model comparison),
 `scripts/run_holdout_eval.py --n_episodes 15` (holdout eval, all 3 regimes),
 `scripts/run_significance_test.py` (paired significance vs. GLFT from holdout_eval.csv),
-`scripts/run_ood_transfer.py --n_episodes 15` (OOD transfer), and
-`scripts/run_stylized_facts.py` (simulator audit). `scripts/build_dashboard_data.py`
-assembles all of the above plus `logs/*/train_history.json` /`eval_history.json` into
-the dashboard's `viz_data.json`.
+`scripts/run_ood_transfer.py --n_episodes 15` (OOD transfer),
+`scripts/run_stylized_facts.py` (simulator audit),
+`scripts/run_cvar_sweep_eval.py --n_episodes 15` (CVaR alpha sweep eval), and
+`scripts/run_encoder_ablation_eval.py --n_episodes 15` (encoder ablation eval).
+`scripts/build_dashboard_data.py` assembles all of the above plus
+`logs/*/train_history.json` /`eval_history.json` into the dashboard's `viz_data.json`.
 
 ## Key findings
 
@@ -115,6 +130,45 @@ whole calibration pipeline has since been archived to `archive/lobster_calibrati
 The stylized-facts checks above are the closest substitute available for the
 calibration step that never happened, not a replacement for it.
 
+## CVaR sweep and encoder ablation
+
+**CVaR alpha sweep (QR-DQN + IQN × α ∈ {0.05, 0.10, 0.25, 0.50, 1.0}, `normal`
+regime)** — the naive expectation is a smooth efficient frontier: lower α (more
+risk-averse) trades lower mean P&L for better tail protection (higher CVaR₀.₁₀),
+converging to a risk-neutral mean-maximizer at α=1.0. **The data doesn't show
+that.** For QR-DQN, α=0.25 dominates every other α on *both* axes simultaneously
+(mean held-out P&L +985, CVaR₀.₁₀ +639 — both the best of the 5 values), while
+α=1.0 (nominally risk-neutral) is one of the worst on both (mean −14, CVaR −515).
+For IQN, there's no visible relationship with α at all: mean P&L ranges from +293
+(α=0.05) down to −951 (α=0.50) with no monotonic trend, and CVaR₀.₁₀ is deeply
+negative (−3800 to −6100) across every α value. With one training seed per α, this
+is most plausibly ordinary seed-to-seed training variance dominating any real
+CVaR-alpha effect at this sample size, not evidence that the CVaR mechanism itself
+doesn't work — but it's also not evidence that it produces the textbook frontier.
+A genuine answer needs multiple seeds per α to separate signal from noise; see
+`cvar_efficient_frontier.csv` for the full table.
+
+**Encoder ablation (QR-DQN × {handcrafted, cnn, autoencoder, recurrent}, α=0.25,
+`normal` regime)** — a clean, statistically significant result: **handcrafted
+features beat every learned-representation alternative by a wide margin.**
+Held-out Sharpe: handcrafted +3.82, cnn +0.48, autoencoder +0.003, recurrent
+−0.25 — all three differences vs. handcrafted are significant at p<0.001 (paired
+Wilcoxon, n=15). For this project's training budget and reward design, none of
+the alternative representations tried come close to the hand-engineered feature
+vector. A data-quality caveat worth flagging rather than glossing over: **cnn and
+autoencoder both showed a minority of held-out episodes at exactly zero Sharpe**
+(2/15 and 6/15 respectively) — the signature of a policy that never participates
+in the market for an entire episode, not just a bad one. Handcrafted and recurrent
+showed no such episodes. Since cnn and autoencoder are the two encoders that
+consume the raw LOB depth snapshot (instead of handcrafted's engineered features),
+this looks like an issue specific to that raw-snapshot input path rather than the
+autoencoder's reconstruction quality specifically (its pretraining reconstruction
+loss was excellent, ≈1.3e-8) — worth a follow-up look at how the CNN/AE-encoded
+state interacts with ε-greedy exploration or the replay buffer before concluding
+raw-snapshot encoders are simply worse, since a policy that goes silent for a
+third of its held-out episodes is a different failure mode than "learns a worse
+policy."
+
 ## Bugs found and fixed during this sweep
 
 Two real bugs in `agents/sarsa.py` were caught while building the results dashboard,
@@ -175,13 +229,21 @@ retraining variance rather than the fix's effect. Re-running with multiple seeds
 - **No multi-seed replication.** All results are seed=42. The held-out significance
   test (n=15 paired episodes) is real evidence within that one seed's trained policy,
   but doesn't rule out seed-to-seed variance in which policy training converges to.
-- **No CVaR alpha sensitivity.** QR-DQN/IQN were only ever trained at alpha=0.25.
-- **No encoder/recurrent ablation.** See the top-of-file note — this is the
-  handcrafted-snapshot slice of the full 17-variant design, not the full ablation.
+- **CVaR alpha sweep and encoder ablation are both single-seed, `normal`-regime
+  only.** The CVaR sweep's non-monotonic, dominated-frontier result (see above)
+  is exactly the kind of finding multi-seed replication would need to confirm
+  isn't just noise — as-is, it can't distinguish "CVaR-alpha has no clean effect
+  here" from "one unlucky/lucky training seed per alpha." The encoder ablation
+  covers only QR-DQN, not the other 4 agents' recurrent variants or the full
+  17-variant grid.
 - **OOD transfer is one direction only, one seed.** Only low_vol→high_vol was tested
   (not normal→high_vol, high_vol→low_vol, etc.), and like everything else here, only
   at seed=42 — no replication to confirm the IQN/PPO generalization ranking holds
   under a different training seed.
+- **The cnn/autoencoder zero-Sharpe episodes are unexplained.** Flagged above as a
+  real anomaly (2/15 and 6/15 episodes respectively at exactly zero Sharpe) — this
+  session didn't dig into root cause, so treat the cnn/autoencoder Sharpe numbers as
+  provisional pending that investigation, not just "worse than handcrafted."
 
 ## Dashboard
 
