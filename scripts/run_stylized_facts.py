@@ -1,7 +1,7 @@
 """
 scripts/run_stylized_facts.py
 
-Round 4 workstream E: stylized-facts audit of the live ABIDES simulator. Uses a random policy (envs.stylized_facts.run_stylized_facts_audit's own design — this
+Stylized-facts audit of the live ABIDES simulator. Uses a random policy (envs.stylized_facts.run_stylized_facts_audit's own design — this
 validates the SIMULATOR's realism) across all three regimes.
 
 Usage:

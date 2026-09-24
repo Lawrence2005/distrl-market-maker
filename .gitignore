@@ -47,7 +47,6 @@ multirun/
 archive/
 
 # Experiment outputs (tracked via W&B, not git)
-experiments/results/runs/
 wandb/
 
 # Notebooks checkpoints

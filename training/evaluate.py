@@ -164,8 +164,12 @@ def load_agent(
         })
         return agent, "handcrafted"
 
-    # Neural agents — load from .pt
-    ckpt = torch.load(str(checkpoint), map_location=device)
+    # Neural agents — load from .pt. weights_only=False: our own checkpoint
+    # files, never external ones — see training/rollout.py::load_checkpoint
+    # for why this is required once a checkpoint's agent_state embeds the
+    # replay buffer (numpy arrays / Transition namedtuples, outside
+    # torch's weights_only=True default allowed-globals list).
+    ckpt = torch.load(str(checkpoint), map_location=device, weights_only=False)
     agent_state = ckpt.get("agent_state", ckpt)
 
     if agent_type == "dqn":

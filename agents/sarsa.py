@@ -519,11 +519,12 @@ class SARSAAgent(AgentBase):
 
     def train_step(
         self,
-        obs:      Optional[np.ndarray] = None,
-        action:   Optional[int]        = None,
-        reward:   Optional[float]      = None,
-        next_obs: Optional[np.ndarray] = None,
-        done:     Optional[bool]       = None,
+        obs:         Optional[np.ndarray] = None,
+        action:      Optional[int]        = None,
+        reward:      Optional[float]      = None,
+        next_obs:    Optional[np.ndarray] = None,
+        done:        Optional[bool]       = None,
+        next_action: Optional[int]        = None,
     ) -> Optional[float]:
         """
         Perform one SARSA(λ) update step.
@@ -535,11 +536,26 @@ class SARSAAgent(AgentBase):
 
         Parameters
         ----------
-        obs      : np.ndarray — current state s
-        action   : int        — action taken a
-        reward   : float      — reward received r
-        next_obs : np.ndarray — next state s'
-        done     : bool       — episode ended
+        obs         : np.ndarray — current state s
+        action      : int        — action taken a
+        reward      : float      — reward received r
+        next_obs    : np.ndarray — next state s'
+        done        : bool       — episode ended
+        next_action : int | None — the on-policy action a' that will
+                      actually be executed at s' (None if done). MUST be
+                      the same action the caller's next env.step() actually
+                      takes — the whole point of SARSA (vs. Q-learning) is
+                      bootstrapping off the transition that really happens
+                      next, not off an independently re-sampled action from
+                      the same ε-greedy policy. Caller (training/rollout.py)
+                      samples this once via agent.act(next_obs, ...) and
+                      passes it both here and as the next iteration's
+                      `action` — this method must NOT re-sample its own via
+                      self.act(next_obs), which would silently decouple the
+                      bootstrap from what's actually executed (still an
+                      unbiased on-policy sample in expectation, but breaks
+                      the eligibility trace's temporal credit assignment,
+                      which assumes a'-used-for-bootstrap == a'-executed).
 
         Returns
         -------
@@ -557,12 +573,11 @@ class SARSAAgent(AgentBase):
         # Update eligibility traces
         self._update_traces(tiles, action)
 
-        # Select next action (on-policy: SARSA uses π for next action)
+        # Bootstrap off the SAME next action that will actually be executed.
         if done:
             q_next = 0.0
         else:
             next_tiles = self._get_active_tiles(next_obs)
-            next_action = self.act(next_obs)   # on-policy next action
             q_next = self._q_value(next_tiles, next_action)
 
         # TD error: δ = r + γ·q̂(s', a') - q̂(s, a)

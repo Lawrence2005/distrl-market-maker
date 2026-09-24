@@ -557,13 +557,40 @@ class PPOAgent(AgentBase):
         total_loss = 0.0
         n_updates  = 0
 
+        # ── Build minibatch index groups ────────────────────────────────
+        # Non-recurrent: shuffle individual transitions (i.i.d. minibatches,
+        # standard PPO). Recurrent: shuffling individual transitions and
+        # then resetting hidden state to zero for every single one (the old
+        # behavior here) forwards the LSTM as T=1 for every sample — BPTT
+        # can never propagate more than one step, so the recurrent weights
+        # never get a training signal that uses temporal context, even
+        # though rollout-time action selection DOES carry hidden state
+        # across real consecutive steps. Fix: shuffle CONTIGUOUS chunks of
+        # up to seq_len transitions (order preserved within a chunk, chunk
+        # order shuffled across epochs — the trajectory is already in
+        # temporal order from the buffer, unmodified by GAE above), reset
+        # hidden once per chunk rather than once per transition. This is
+        # the same "reset at a sampled window start" convention already
+        # used by the DQN-family sequence replay buffer and endorsed by
+        # Hausknecht & Stone's own studied "Random Updates" variant.
+        if self.ac.use_lstm:
+            seq_len = min(30, T)
+            chunk_starts = list(range(0, T, seq_len))
+        else:
+            chunk_starts = None
+
         # ── K epochs of minibatch updates ─────────────────────────────
         for _ in range(self.k_epochs):
-            # Shuffle indices for minibatches
-            indices = np.random.permutation(T)
+            if chunk_starts is not None:
+                np.random.shuffle(chunk_starts)
+                idx_groups = [np.arange(s, min(s + seq_len, T)) for s in chunk_starts]
+            else:
+                # Shuffle indices for minibatches
+                indices = np.random.permutation(T)
+                idx_groups = [indices[start : start + self.minibatch_size]
+                              for start in range(0, T, self.minibatch_size)]
 
-            for start in range(0, T, self.minibatch_size):
-                idx = indices[start : start + self.minibatch_size]
+            for idx in idx_groups:
                 if len(idx) < 2:
                     continue
 
@@ -573,17 +600,29 @@ class PPOAgent(AgentBase):
                 mb_adv     = adv_t[idx]
                 mb_returns = returns_t[idx]
 
-                # Forward pass: treat each minibatch element as T=1 sequence
-                # Reset hidden for each minibatch (minibatches are shuffled,
-                # not contiguous sequences — hidden state is irrelevant here)
-                self.ac.reset_hidden(
-                    batch_size=len(idx), device=self.device
-                )
-                logits, values, _ = self.ac.forward(
-                    mb_obs.unsqueeze(1)   # (B, 1, obs_dim)
-                )
-                logits = logits.squeeze(1)   # (B, n_actions)
-                values = values.squeeze(1)   # (B,)
+                if chunk_starts is not None:
+                    # One contiguous in-order chunk, real BPTT over its
+                    # length. Batch dim = 1 (chunks aren't padded to a
+                    # common length, so they aren't batched together).
+                    self.ac.reset_hidden(batch_size=1, device=self.device)
+                    logits, values, _ = self.ac.forward(
+                        mb_obs.unsqueeze(0)   # (1, len(idx), obs_dim)
+                    )
+                    logits = logits.squeeze(0)   # (len(idx), n_actions)
+                    values = values.squeeze(0)   # (len(idx),)
+                else:
+                    # Forward pass: treat each minibatch element as T=1
+                    # sequence (minibatches are shuffled individual
+                    # transitions, not contiguous — hidden state carries no
+                    # meaningful history here, snapshot mode only).
+                    self.ac.reset_hidden(
+                        batch_size=len(idx), device=self.device
+                    )
+                    logits, values, _ = self.ac.forward(
+                        mb_obs.unsqueeze(1)   # (B, 1, obs_dim)
+                    )
+                    logits = logits.squeeze(1)   # (B, n_actions)
+                    values = values.squeeze(1)   # (B,)
 
                 dist     = Categorical(logits=logits)
                 new_lp   = dist.log_prob(mb_actions)

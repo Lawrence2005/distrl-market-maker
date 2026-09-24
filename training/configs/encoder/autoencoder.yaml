@@ -1,4 +1,13 @@
 type: autoencoder
-latent_dim: 16        # ablate: 8, 16, 32
-pretrained_weights: checkpoints/ae_encoder_16.pt
+# latent_dim=8 chosen deliberately: input_dim is 20 (10 ask + 10 bid levels),
+# so latent_dim=32 (previously the downstream default) EXCEEDS input_dim —
+# an over-complete autoencoder with no real information bottleneck, which
+# needs no compression to reconstruct near-perfectly (confirmed: test loss
+# 1.67e-7 at dim=32 vs 0.000184 at dim=16 vs 0.00131 at dim=8, a ~7700x gap
+# that's the signature of a trivial/degenerate near-identity solution, not
+# meaningful learned compression). latent_dim=8 is a genuine bottleneck
+# (40% of input_dim) and matches encoders/cnn.yaml's latent_dim, so the
+# cnn-vs-AE ablation is also capacity-matched, not just AE-vs-itself.
+latent_dim: 8         # ablate: 8, 16 — 8 is the downstream default (32 dropped, over-complete)
+pretrained_weights: checkpoints/ae_encoder_8.pt
 freeze: true

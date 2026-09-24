@@ -73,6 +73,9 @@ class DQNAgent(AgentBase):
     epsilon_decay_steps : int  — steps over which ε decays (default 50_000)
     buffer_capacity: int       — replay buffer size (default 100_000)
     prioritized    : bool      — use PER (default False for DQN ablation)
+    warmup_steps   : int       — env steps to collect before the first
+                                 gradient update (default 0 = none;
+                                 cfg.training.warmup_steps)
     device         : str       — 'cpu' or 'cuda'
     """
 
@@ -95,8 +98,10 @@ class DQNAgent(AgentBase):
         prioritized:         bool  = False,
         use_lstm:            bool  = True,
         huber_beta:          float = 1.0,
+        warmup_steps:        int   = 0,
         device:              str   = "cpu",
     ):
+        self.warmup_steps       = warmup_steps
         self.n_actions          = n_actions
         self.gamma              = gamma
         self.batch_size         = batch_size
@@ -232,6 +237,8 @@ class DQNAgent(AgentBase):
         float | None — loss value if update was performed, None if buffer
                        does not yet have enough transitions.
         """
+        if self._steps < self.warmup_steps:
+            return None
         if not self.buffer.is_ready(self.batch_size):
             return None
 
@@ -303,6 +310,7 @@ class DQNAgent(AgentBase):
             "steps":     self._steps,
             "updates":   self._updates,
             "beta":      self.buffer.beta if self.buffer.prioritized else None,
+            "buffer":    self.buffer.get_state(),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -314,6 +322,7 @@ class DQNAgent(AgentBase):
         self._updates = state["updates"]
         if self.buffer.prioritized and state["beta"] is not None:
             self.buffer.beta = state["beta"]
+        self.buffer.set_state(state.get("buffer"))   # .get: absent in pre-fix checkpoints
 
     # ------------------------------------------------------------------
     # Utility

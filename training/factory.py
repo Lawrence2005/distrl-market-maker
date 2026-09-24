@@ -61,6 +61,7 @@ def build_agent(
     enc_type:    str,
     seed:        int = 42,
     use_lstm:    bool = True,
+    warmup_steps: int = 0,
 ) -> AgentBase:
     """
     Instantiate agent from config group agent/.
@@ -74,6 +75,10 @@ def build_agent(
     device    : str        — 'cpu' or 'cuda'
     use_lstm  : bool       — True (variant=recurrent) for temporal memory,
                              False (variant=null) for the snapshot ablation
+    warmup_steps : int     — env steps to collect (cfg.training.warmup_steps)
+                             before the first gradient update. Only meaningful
+                             for the replay-buffer agents (dqn/qrdqn/iqn);
+                             ignored by sarsa/ppo, which have no such config.
 
     Returns
     -------
@@ -94,6 +99,7 @@ def build_agent(
         buffer_capacity = agent_cfg.get("replay_buffer_size", 100_000),
         prioritized    = agent_cfg.get("prioritized_replay", True),
         use_lstm       = use_lstm,
+        warmup_steps   = warmup_steps,
         device         = device,
     )
 

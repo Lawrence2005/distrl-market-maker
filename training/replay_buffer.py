@@ -28,7 +28,12 @@ DRQN sequence sampling
 -----------------------
 For recurrent agents, experiences must be sampled as contiguous sequences
 of length `seq_len` rather than individual transitions, so the LSTM can
-learn temporal dependencies. Use `sample_sequences()` for this.
+learn temporal dependencies. Use `sample_sequences()` for this. When
+prioritized=True, the sequence's LAST transition (the one every agent's
+train_step actually bootstraps from, via `[:, -1]`) is sampled through the
+same sum-tree stratified scheme as `sample()`/`_sample_per()`, with
+matching importance-sampling weights — the priority attaches to the
+transition the TD update actually uses.
 
 For non-recurrent ablations, use `sample()` for i.i.d. transition sampling.
 
@@ -301,17 +306,27 @@ class ReplayBuffer:
         -------
         batch   : dict — keys: obs, action, reward, next_obs, done
                          each value shape (B, seq_len, ...)
-        indices : np.ndarray shape (B,) — start indices of each sequence
+        indices : np.ndarray shape (B,) — for prioritized=True, real
+                  sum-tree leaf indices (always >= capacity) for the
+                  sequence's LAST transition, usable directly with
+                  update_priorities(); for prioritized=False, start
+                  indices (< capacity, silently skipped by
+                  update_priorities()).
         weights : np.ndarray shape (B,) — IS weights (all ones for uniform)
         """
         assert len(self) >= self.seq_len, (
             f"Buffer has {len(self)} transitions, need at least seq_len={self.seq_len}"
         )
 
-        # For sequence sampling, always use uniform start-index sampling
-        # (PER sequence sampling is complex and offers marginal benefit
-        #  over PER transition sampling; use uniform here and PER for
-        #  the TD-error update step)
+        if self.prioritized:
+            return self._sample_sequences_per(batch_size)
+        return self._sample_sequences_uniform(batch_size)
+
+    def _sample_sequences_uniform(
+        self,
+        batch_size: int,
+    ) -> tuple[dict, np.ndarray, np.ndarray]:
+        """Uniform start-index sequence sampling."""
         n       = len(self)
         starts  = np.random.randint(0, n - self.seq_len + 1, size=batch_size)
         indices = starts
@@ -323,6 +338,58 @@ class ReplayBuffer:
 
         batch   = self._collate_sequences(seqs)
         weights = np.ones(batch_size, dtype=np.float32)
+        return batch, indices, weights
+
+    def _sample_sequences_per(
+        self,
+        batch_size: int,
+    ) -> tuple[dict, np.ndarray, np.ndarray]:
+        """
+        PER-weighted sequence sampling.
+
+        Samples each sequence's END position (the transition every agent's
+        train_step actually indexes with `[:, -1]` for the TD update) via
+        the same stratified sum-tree scheme as `_sample_per()`, then walks
+        backward `seq_len` steps to build the contiguous window. Returned
+        indices are real tree leaf indices, so update_priorities() applies
+        to them unmodified.
+        """
+        segment = self._tree.total / batch_size
+
+        seqs       = []
+        indices    = np.zeros(batch_size, dtype=np.int32)
+        priorities = np.zeros(batch_size, dtype=np.float64)
+
+        for i in range(batch_size):
+            lo = segment * i
+            hi = segment * (i + 1)
+            s  = np.random.uniform(lo, hi)
+            idx, priority, transition = self._tree.get(s)
+            end = idx - self._tree.capacity
+            # Retry (full-range resample, same fallback as _sample_per)
+            # on an unwritten slot or a position with no full seq_len
+            # window of history behind it.
+            while transition is None or end < self.seq_len - 1:
+                s = np.random.uniform(0, self._tree.total)
+                idx, priority, transition = self._tree.get(s)
+                end = idx - self._tree.capacity
+
+            start = end - self.seq_len + 1
+            seq   = [self._get(start + t) for t in range(self.seq_len)]
+            seqs.append(seq)
+            indices[i]    = idx
+            priorities[i] = priority
+
+        # Importance-sampling weights — identical formula to _sample_per()
+        n       = self._tree.n_entries
+        probs   = priorities / self._tree.total
+        weights = (n * probs) ** (-self.beta)
+        weights = (weights / weights.max()).astype(np.float32)
+
+        # Anneal beta toward 1.0
+        self.beta = min(1.0, self.beta + self.beta_increment)
+
+        batch = self._collate_sequences(seqs)
         return batch, indices, weights
 
     # ── Priority updates (PER only) ───────────────────────────────────
@@ -338,14 +405,17 @@ class ReplayBuffer:
         Called by the agent after each training step with the new
         absolute TD errors for the sampled batch.
 
-        Only valid for indices returned by sample() (tree leaf indices,
-        always >= capacity). Indices from sample_sequences() are start
-        positions (< capacity) and are silently skipped — sequence PER
-        is non-standard and not implemented.
+        Valid for indices returned by sample() or, when prioritized=True,
+        sample_sequences() — both hand back real tree leaf indices
+        (always >= capacity). If sample_sequences() was called on a
+        non-prioritized buffer, its start-position indices (< capacity)
+        are silently skipped here (no-op, since there is nothing to
+        update on a uniform buffer).
 
         Parameters
         ----------
         indices    : np.ndarray shape (B,) — tree indices from sample()
+                     or sample_sequences()
         priorities : np.ndarray shape (B,) — |TD error| + epsilon
         """
         if not self.prioritized:
@@ -455,6 +525,58 @@ class ReplayBuffer:
     def is_ready(self, batch_size: int) -> bool:
         """True when buffer has enough transitions to sample a batch."""
         return len(self) >= batch_size
+
+    # ── Serialization ─────────────────────────────────────────────────
+    # `run_agent_supervised.sh` always passes training.resume=true, even
+    # on the very first attempt, so it takes effect on every OOM/crash/
+    # host-restart mid-run. Without this, a resumed run restores weights,
+    # optimizer state, and the epsilon/PER-beta schedule position (already
+    # far along), but refills an EMPTY buffer under a low-epsilon,
+    # near-converged policy — losing the transition diversity those
+    # schedules assume is already present. Included in the agent's own
+    # state_dict() so it round-trips through the existing checkpoint
+    # format with no separate file; old checkpoints saved before this
+    # existed simply have no "buffer" key, and load_state_dict() must
+    # leave the buffer empty in that case (today's existing behavior),
+    # not raise.
+
+    def get_state(self) -> dict:
+        """Full buffer contents + PER bookkeeping, for checkpointing."""
+        if self.prioritized:
+            return {
+                "prioritized":   True,
+                "tree_array":    self._tree.tree.copy(),
+                "tree_data":     list(self._tree.data),
+                "tree_write":    self._tree._write,
+                "tree_entries":  self._tree.n_entries,
+                "max_priority":  self._max_priority,
+                "beta":          self.beta,
+            }
+        return {
+            "prioritized": False,
+            "buffer":      list(self._buffer),
+            "write":       self._write,
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Restore buffer contents saved by get_state(). No-op on None."""
+        if state is None:
+            return
+        if state["prioritized"] and self.prioritized:
+            self._tree.tree      = state["tree_array"].copy()
+            self._tree.data      = list(state["tree_data"])
+            self._tree._write    = state["tree_write"]
+            self._tree.n_entries = state["tree_entries"]
+            self._max_priority   = state["max_priority"]
+            self.beta            = state["beta"]
+        elif not state["prioritized"] and not self.prioritized:
+            self._buffer = list(state["buffer"])
+            self._write  = state["write"]
+        # else: prioritized-mode mismatch between the saved state and this
+        # buffer (e.g. prioritized_replay config changed between the run
+        # that saved this checkpoint and this resume) — leave the buffer
+        # empty rather than guess; the warmup_steps gate re-applies from
+        # the restored _steps count regardless.
 
     def __repr__(self) -> str:
         mode = "PER" if self.prioritized else "Uniform"

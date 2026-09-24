@@ -11,7 +11,18 @@ data/
 ├── lobster/                          ← gitignored when data arrives
 │   └── README.md                     ← instructions for obtaining LOBSTER data
 ├── processed/
-│   └── lob_snapshots.npy             ← gitignored, AE pre-training input
+│   ├── lob_snapshots_synthetic.npy   ← gitignored; leftover output of the
+│   │                                   now-archived synthetic-LOBSTER
+│   │                                   generator (renamed from
+│   │                                   lob_snapshots.npy to make its
+│   │                                   synthetic origin explicit) — no
+│   │                                   longer used by the AE-pretraining
+│   │                                   pipeline, superseded by
+│   │                                   lob_snapshots_abides.npy below
+│   └── lob_snapshots_abides.npy      ← gitignored; actual AE pre-training
+│                                       input, collected from the real
+│                                       ABIDES rmsc04 simulator via
+│                                       scripts/collect_abides_snapshots.py
 └── process_lobster.py                ← handles both sources via --data_dir
 ```
 
@@ -20,6 +31,9 @@ calibration pipeline it fed (`data/synthetic/`, `data/calibration/`) were
 archived — those calibrated parameters were never consumed by the live
 simulator, which uses ABIDES's own `rmsc04` background config unmodified.
 See `archive/lobster_calibration/` if reviving that pipeline.
+`data/processed/lob_snapshots_synthetic.npy` is that generator's leftover
+processed output; AE pretraining now uses real ABIDES-collected snapshots
+instead (see `scripts/collect_abides_snapshots.py`).
 
 ## LOBSTER Data
 LOBSTER data must be obtained separately from lobsterdata.com.

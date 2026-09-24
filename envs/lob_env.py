@@ -60,6 +60,112 @@ _VOLUME_HISTORY_MAXLEN = 500
 _LOB_HISTORY_MAXLEN    = 100
 _ABIDES_FALLBACK_WARNED = False
 
+# Depth to fetch from ABIDES's raw order-book state into the "raw" snapshot
+# dict (info["lob_snapshot"], consumed by training/rollout.py's
+# get_encoder_input() for the cnn/autoencoder encoders). Deliberately
+# independent of n_lob_levels, which governs ONLY the handcrafted encoder's
+# own summarized gym-observation depth (LOBMarketMakingEnv._get_obs slices
+# the raw arrays down to self.n_lob_levels itself, so raising this constant
+# does not change handcrafted's observation shape). These two consumers
+# want different depths and must not share one knob — they used to (both
+# read n_lob_levels=3), which silently capped cnn/AE input to 3 real +
+# 7 zero-padded levels every step of every run, regardless of how thin the
+# real book was. Must match encoder/cnn.yaml's n_levels and
+# training/rollout.py's get_encoder_input()'s hardcoded n_levels, both 10.
+RAW_SNAPSHOT_LEVELS = 10
+
+
+def parse_abides_raw_state(raw_state: dict, n_lob_levels: int) -> dict:
+    """
+    Extract fill and market data from a single ABIDES raw_state dict.
+
+    raw_state["internal_data"]["inter_wakeup_executed_orders"] is a list
+    of Order objects with attributes:
+        .fill_price  (int, in ABIDES cent units)
+        .quantity    (int, always positive)
+        .side        "BID" | "ASK"  (or check direction from order_status)
+
+    bids/asks are lists of (price, volume) tuples, best-first, up to
+    subscribe_num_levels deep (default 10).
+
+    Module-level (not a method) so both LOBMarketMakingEnv and
+    envs/multi_agent_env.py's MultiAgentMarketEnv parse the same raw_state
+    shape identically — the two envs previously diverged here, which is how
+    the multi-agent obs stub bug went undetected (see git history).
+    """
+    mkt      = raw_state["parsed_mkt_data"][-1]   # ← deque, take latest
+    internal = raw_state["internal_data"]
+
+    bids             = mkt["bids"]
+    asks             = mkt["asks"]
+
+    fills     = internal.get("inter_wakeup_executed_orders", [])
+    bid_qty   = sum(o.quantity for o in fills if o.side.value == "BID")
+    ask_qty   = sum(o.quantity for o in fills if o.side.value == "ASK")
+    signed_volume = bid_qty - ask_qty
+
+    K = n_lob_levels
+    lob_snapshot = {
+        "bid_prices": [b[0] / 100.0 for b in bids[:K]],
+        "bid_sizes":  [b[1]         for b in bids[:K]],
+        "ask_prices": [a[0] / 100.0 for a in asks[:K]],
+        "ask_sizes":  [a[1]         for a in asks[:K]],
+    }
+
+    return {
+        "bid_qty":       bid_qty,
+        "ask_qty":       ask_qty,
+        "signed_volume": signed_volume,
+        "lob_snapshot":  lob_snapshot,
+        "cash":          internal.get("cash", 0.0),
+        "holdings":      internal.get("holdings", 0),
+    }
+
+
+def compute_rsi(price_history, window: int = 14) -> float:
+    """
+    Relative Strength Index from a price history sequence.
+
+    RSI = 100 − 100 / (1 + avg_gain / avg_loss)
+
+    Returns 50.0 (neutral) when history is insufficient.
+
+    Module-level so LOBMarketMakingEnv and MultiAgentMarketEnv share one
+    implementation instead of maintaining parallel copies.
+    """
+    if len(price_history) < window + 1:
+        return 50.0
+
+    prices   = np.asarray(list(price_history)[-(window + 1):])
+    deltas   = np.diff(prices)
+    gains    = np.where(deltas > 0, deltas, 0.0)
+    losses   = np.where(deltas < 0, -deltas, 0.0)
+    avg_gain = gains.mean()
+    avg_loss = losses.mean()
+
+    if avg_loss < 1e-10:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return float(100.0 - 100.0 / (1.0 + rs))
+
+
+def compute_realized_vol(price_history, window: int = 20) -> float:
+    """
+    Realized volatility: std of log-returns over the last `window` steps.
+
+    Returns 0.0 when history is insufficient.
+
+    Module-level so LOBMarketMakingEnv and MultiAgentMarketEnv share one
+    implementation instead of maintaining parallel copies.
+    """
+    prices = np.asarray(list(price_history))
+    if len(prices) < 2:
+        return 0.0
+
+    prices  = prices[-min(window + 1, len(prices)):]
+    log_ret = np.diff(np.log(np.maximum(prices, 1e-10)))
+    return float(np.std(log_ret))
+
 
 def build_abides_env(use_abides: bool, background_config_extra_kvargs: dict | None = None):
     """
@@ -235,41 +341,12 @@ class LOBMarketMakingEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _compute_rsi(self, window: int = 14) -> float:
-        """
-        Relative Strength Index from price history.
-
-        RSI = 100 − 100 / (1 + avg_gain / avg_loss)
-
-        Returns 50.0 (neutral) when history is insufficient.
-        """
-        if len(self._price_history) < window + 1:
-            return 50.0
-
-        prices   = np.asarray(list(self._price_history)[-(window + 1):])
-        deltas   = np.diff(prices)
-        gains    = np.where(deltas > 0, deltas, 0.0)
-        losses   = np.where(deltas < 0, -deltas, 0.0)
-        avg_gain = gains.mean()
-        avg_loss = losses.mean()
-
-        if avg_loss < 1e-10:
-            return 100.0
-        rs = avg_gain / avg_loss
-        return float(100.0 - 100.0 / (1.0 + rs))
+        """Relative Strength Index from price history. See module-level compute_rsi()."""
+        return compute_rsi(self._price_history, window)
 
     def _compute_realized_vol(self, window: int = 20) -> float:
-        """
-        Realized volatility: std of log-returns over the last `window` steps.
-
-        Returns 0.0 when history is insufficient.
-        """
-        prices = np.asarray(list(self._price_history))
-        if len(prices) < 2:
-            return 0.0
-
-        prices  = prices[-min(window + 1, len(prices)):]
-        log_ret = np.diff(np.log(np.maximum(prices, 1e-10)))
-        return float(np.std(log_ret))
+        """Realized vol (std of log-returns). See module-level compute_realized_vol()."""
+        return compute_realized_vol(self._price_history, window)
 
     # ------------------------------------------------------------------
     # Observation
@@ -444,11 +521,19 @@ class LOBMarketMakingEnv(gym.Env):
             ψ_a = matched_ask  · (ask_price  − mid)   ← ask half-spread capture
             ψ_b = matched_bid  · (mid        − bid_price) ← bid half-spread capture
             ΔM  = mid − prev_mid                       ← mid-price move
-            inv_pnl = q · ΔM                           ← mark-to-market inventory PnL
+            inv_pnl = q_prev · ΔM                      ← mark-to-market inventory PnL
+
+        q_prev is inventory held *before* this step's fills — shares that
+        transact this step are exposed to ΔM for zero time and are already
+        compensated via ψ_a/ψ_b at their actual fill price, so marking them
+        against this step's mid-move too would double-count exactly
+        (bid_filled − ask_filled)·ΔM of PnL per step. See `step()`'s
+        `prev_inventory` (captured before the inventory update) — this is
+        what must be passed as `inventory` below, not post-fill `self._inventory`.
 
         Asymmetric (Avellaneda–Stoikov flavour)
         ----------------------------------------
-            r = PnL − η · max(0, inv_pnl)
+            r = PnL − η · max(0, −inv_pnl)
             Penalises only adverse inventory PnL; lets favourable moves pass through.
             Encourages the agent to reduce inventory *before* adverse moves.
 
@@ -472,7 +557,8 @@ class LOBMarketMakingEnv(gym.Env):
         matched_ask      : quantity filled on the ask side this step
         bid_price        : price of the submitted bid quote
         ask_price        : price of the submitted ask quote
-        inventory        : current inventory *after* fills (= self._inventory)
+        inventory        : inventory held *before* this step's fills (= prev_inventory,
+                           NOT self._inventory — see mark-to-market note above)
         filled_both      : True if both sides filled > 0 in this step
         cross_spread_fill: True if a fill occurred at an adverse price
 
@@ -557,6 +643,25 @@ class LOBMarketMakingEnv(gym.Env):
 
         if self._abides_env is not None:
             # ── Real ABIDES path ──────────────────────────────────────────
+            # SubGymMarketsExecutionEnv_v0.reset() (old-style gym.core.Env,
+            # no seed= param) draws its OWN background-agent-population seed
+            # from self.np_random.integers(...) — completely independent of
+            # any seed this project passes, and that np_random lazily
+            # self-seeds from OS entropy the first time it's touched if
+            # nothing ever sets it. Confirmed empirically (two separate
+            # process runs, identical checkpoint + identical seed argument,
+            # produced different action sequences and rewards; ruled out
+            # PYTHONHASHSEED). gym.core.Env exposes a public np_random
+            # setter — assigning it here, deterministically derived from
+            # our own `seed`, makes ABIDES's per-episode background-agent
+            # draw reproducible, and — since every eval script builds one
+            # env per model with the same literal seed before looping over
+            # per-episode reset() calls — restores genuine pairing across
+            # models (same seed → same np_random state → same ABIDES seed
+            # → same simulated order flow for whichever model's reset()
+            # call this is).
+            if seed is not None:
+                self._abides_env.np_random = np.random.default_rng(seed)
             _ = self._abides_env.reset()
             raw_state = self._abides_env.gym_agent.raw_state[-1]
             self._mid_price = self._extract_mid_price(raw_state)
@@ -573,10 +678,11 @@ class LOBMarketMakingEnv(gym.Env):
 
         obs  = self._get_obs()
         info = {
-            "step":      self._step,
-            "inventory": self._inventory,
-            "mid_price": self._mid_price,
-            "cash":      self._cash,
+            "step":         self._step,
+            "inventory":    self._inventory,
+            "mid_price":    self._mid_price,
+            "cash":         self._cash,
+            "lob_snapshot": parsed["lob_snapshot"] if self._abides_env is not None else {},
         }
         return obs, info
 
@@ -649,7 +755,7 @@ class LOBMarketMakingEnv(gym.Env):
             matched_ask=float(ask_filled),
             bid_price=bid_price,
             ask_price=ask_price,
-            inventory=float(self._inventory),
+            inventory=float(prev_inventory),
             filled_both=filled_both,
             cross_spread_fill=cross_spread_fill,
         )
@@ -680,6 +786,7 @@ class LOBMarketMakingEnv(gym.Env):
             "reward":      reward,
             "signed_volume":   signed_vol,
             "queue_imbalance": float(obs[2]),   # obs[2] is imbalance (computed)
+            "lob_snapshot":    lob_snap,
             "market_spread": (
                     lob_snap["ask_prices"][0] - lob_snap["bid_prices"][0]
                     if lob_snap.get("ask_prices") and lob_snap.get("bid_prices")
@@ -767,42 +874,12 @@ class LOBMarketMakingEnv(gym.Env):
         """
         Extract fill and market data from a single ABIDES raw_state dict.
 
-        raw_state["internal_data"]["inter_wakeup_executed_orders"] is a list
-        of Order objects with attributes:
-            .fill_price  (int, in ABIDES cent units)
-            .quantity    (int, always positive)
-            .side        "BID" | "ASK"  (or check direction from order_status)
-
-        bids/asks are lists of (price, volume) tuples, best-first, up to
-        subscribe_num_levels deep (default 10).
+        Thin wrapper around the module-level `parse_abides_raw_state` — kept
+        as a method for backwards-compat call sites; see that function for
+        the actual parsing logic (shared with envs/multi_agent_env.py so the
+        two envs can't drift on how they read the same raw_state shape).
         """
-        mkt      = raw_state["parsed_mkt_data"][-1]   # ← deque, take latest
-        internal = raw_state["internal_data"]
-
-        bids             = mkt["bids"]
-        asks             = mkt["asks"]
-
-        fills     = internal.get("inter_wakeup_executed_orders", [])
-        bid_qty   = sum(o.quantity for o in fills if o.side.value == "BID")
-        ask_qty   = sum(o.quantity for o in fills if o.side.value == "ASK")
-        signed_volume = bid_qty - ask_qty
-
-        K = self.n_lob_levels
-        lob_snapshot = {
-            "bid_prices": [b[0] / 100.0 for b in bids[:K]],
-            "bid_sizes":  [b[1]         for b in bids[:K]],
-            "ask_prices": [a[0] / 100.0 for a in asks[:K]],
-            "ask_sizes":  [a[1]         for a in asks[:K]],
-        }
-
-        return {
-            "bid_qty":       bid_qty,
-            "ask_qty":       ask_qty,
-            "signed_volume": signed_volume,
-            "lob_snapshot":  lob_snapshot,
-            "cash":          internal.get("cash", 0.0),
-            "holdings":      internal.get("holdings", 0),
-        }
+        return parse_abides_raw_state(raw_state, RAW_SNAPSHOT_LEVELS)
 
 if SubGymMarketsExecutionEnv_v0 is None:
     class AbidesMarketMakingEnv:

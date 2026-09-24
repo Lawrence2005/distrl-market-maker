@@ -252,6 +252,9 @@ class IQNAgent(AgentBase):
     epsilon_decay_steps  : int       — ε decay steps (default 50_000)
     buffer_capacity      : int       — replay buffer size (default 100_000)
     prioritized          : bool      — use PER (default True)
+    warmup_steps         : int       — env steps to collect before the first
+                                       gradient update (default 0 = none;
+                                       cfg.training.warmup_steps)
     device               : str       — 'cpu' or 'cuda'
     """
 
@@ -278,8 +281,10 @@ class IQNAgent(AgentBase):
         buffer_capacity:     int   = 100_000,
         prioritized:         bool  = True,
         use_lstm:            bool  = True,
+        warmup_steps:        int   = 0,
         device:              str   = "cpu",
     ):
+        self.warmup_steps        = warmup_steps
         self.n_actions           = n_actions
         self.n_quantile_samples  = n_quantile_samples
         self.gamma               = gamma
@@ -517,6 +522,8 @@ class IQNAgent(AgentBase):
         -------
         float | None — loss if update performed, None if buffer not ready
         """
+        if self._steps < self.warmup_steps:
+            return None
         if not self.buffer.is_ready(self.batch_size):
             return None
 
@@ -559,11 +566,17 @@ class IQNAgent(AgentBase):
             Z_tgt = r + self.gamma * Z_next_sa * (1.0 - d)        # (B, K)
 
         # ── IQN quantile regression loss ──────────────────────────────
-        taus_mean    = tau.mean(dim=0)   # (K,)
+        # tau is (B, K), independently sampled per row (Dabney et al. 2018)
+        # — pass it through as-is, NOT averaged over the batch. Averaging
+        # ~B i.i.d. Uniform(0,1) draws concentrates every column near 0.5
+        # regardless of what was actually sampled, which silently collapses
+        # the asymmetric quantile-Huber weighting to ≈symmetric mean
+        # regression and defeats the tail-risk objective CVaR action
+        # selection depends on.
         element_loss = QRDQNAgent._quantile_huber_loss(
-            Z_sa, Z_tgt, taus_mean, self.kappa
+            Z_sa, Z_tgt, tau, self.kappa, reduce=False
         )
-        loss = (is_w * element_loss).mean() if is_w.shape == (B,) else element_loss
+        loss = (is_w * element_loss).mean() if is_w.shape == (B,) else element_loss.mean()
 
         # ── Gradient update ───────────────────────────────────────────
         self.optimiser.zero_grad()
@@ -605,6 +618,7 @@ class IQNAgent(AgentBase):
             "steps":       self._steps,
             "updates":     self._updates,
             "beta":        self.buffer.beta if self.buffer.prioritized else None,
+            "buffer":      self.buffer.get_state(),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -617,6 +631,7 @@ class IQNAgent(AgentBase):
         self._updates = state["updates"]
         if self.buffer.prioritized and state["beta"] is not None:
             self.buffer.beta = state["beta"]
+        self.buffer.set_state(state.get("buffer"))   # .get: absent in pre-fix checkpoints
 
     # ------------------------------------------------------------------
     # Utility

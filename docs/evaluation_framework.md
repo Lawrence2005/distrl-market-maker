@@ -4,7 +4,7 @@
 
 | Category | Metric | Formula / Definition | Why It Matters | Literature Source |
 |----------|----------|----------|----------|----------|
-| **P&L Performance** | **Annualized Sharpe Ratio** | `E[P&L] / std(P&L) × √252` | Primary risk-adjusted return metric; standard in all RL market-making papers. | Gašperov et al. (2021); Spooner & Savani (2020) |
+| **P&L Performance** | **Intraday Sharpe Ratio** | `mean(step_PnL) / std(step_PnL) × √T`, T = steps/episode (390) | Primary risk-adjusted return metric; standard in all RL market-making papers. **Not annualized** despite this row's old name — `evaluation/metrics.py::sharpe()` scales by √390 (one trading day), not √252 (trading days/year); a reader comparing against literature Sharpe values computed with √252 would be off by a factor of √252/√390 ≈ 0.80. Audited and corrected this session; re-verify before citing an "annualized" figure anywhere. | Gašperov et al. (2021); Spooner & Savani (2020) |
 | **P&L Performance** | **Mean Episode P&L** | Average total P&L per trading episode | Raw return benchmark; must be positive to be viable. | All RL MM papers |
 | **P&L Performance** | **Normalized Daily PnL** | `Total episode P&L / Average market bid-ask spread` | Normalizes profit across different securities/markets for fair cross-asset comparison; primary metric in Spooner (2018). Allows benchmarking without raw-dollar distortion. | Spooner et al. (2018); Kumar (DRQN MM) |
 | **P&L Performance** | **PnLMAP Ratio** | `Total episode PnL / MAP` | Profit earned per unit of average inventory held. High PnLMAP = strong capital efficiency with low inventory risk. | Gašperov & Kostanjčar Signals (2021) |

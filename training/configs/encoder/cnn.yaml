@@ -2,5 +2,8 @@ type: cnn
 n_levels: 10
 conv1_channels: 32
 conv2_channels: 16
-latent_dim: 16
+# Matches encoders/autoencoder.py's latent_dim=8 (see that file's comment) —
+# a capacity-matched cnn-vs-AE ablation, not confounded by one encoder
+# having more representational capacity than the other.
+latent_dim: 8
 kernel_size: 3

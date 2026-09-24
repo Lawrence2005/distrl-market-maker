@@ -15,7 +15,8 @@ Any figure regenerates in one line:
 
 Dark theme matches Week 3 baseline figures so overlays are consistent.
 
-Figures saved to experiments/<notebook>/ by default.
+Figures saved to evaluation/figures/ by default (there is no experiments/
+folder in this codebase — see CLAUDE.md's Architecture section).
 
 Week 8 deliverable.
 """
@@ -30,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from evaluation.metrics import load_train_history, load_eval_history
+from evaluation.ablation import _run_tag
 
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
@@ -112,14 +114,14 @@ class Visualizer:
     ----------
     log_root  : str | Path — path to logs/ directory
     ckpt_root : str | Path — path to checkpoints/ directory
-    out_root  : str | Path — path to save figures (default experiments/)
+    out_root  : str | Path — path to save figures (default evaluation/figures/)
     """
 
     def __init__(
         self,
         log_root:  str | Path = "logs/",
         ckpt_root: str | Path = "checkpoints/",
-        out_root:  str | Path = "experiments/",
+        out_root:  str | Path = "evaluation/figures/",
     ):
         self.log_root  = Path(log_root)
         self.ckpt_root = Path(ckpt_root)
@@ -194,7 +196,7 @@ class Visualizer:
             agents = list(AGENT_COLORS.keys())
 
         for agent_name in agents:
-            run_tag = f"{agent_name}_{encoder}_{reward}_{regime}_seed{seed}"
+            run_tag = _run_tag(agent_name, encoder, reward, regime, seed)
             run_dir = self.log_root / run_tag
 
             if not run_dir.exists():
@@ -349,15 +351,11 @@ class Visualizer:
                     continue   # SARSA only supports handcrafted
 
                 if enc_name == "recurrent":
-                    run_tag = (
-                        f"{agent_name}_handcrafted_asymmetric"
-                        f"_{regime}_recurrent_seed{seed}"
-                    )
+                    run_tag = _run_tag(agent_name, "handcrafted", "asymmetric",
+                                        regime, seed, recurrent=True)
                 else:
-                    run_tag = (
-                        f"{agent_name}_{enc_name}_asymmetric"
-                        f"_{regime}_seed{seed}"
-                    )
+                    run_tag = _run_tag(agent_name, enc_name, "asymmetric",
+                                        regime, seed)
 
                 run_dir = self.log_root / run_tag
                 if not run_dir.exists():
@@ -451,13 +449,10 @@ class Visualizer:
         labels    = []
 
         for alpha in alphas:
-            run_tag = (
-                f"{agent}_{encoder}_asymmetric_{regime}"
-                f"_alpha{alpha}_seed{seed}"
-            )
+            run_tag = _run_tag(agent, encoder, "asymmetric", regime, seed, alpha=alpha)
             run_dir = self.log_root / run_tag
             if not run_dir.exists():
-                # Try without alpha in tag (older naming)
+                # Try without alpha/sampling tag (older naming, predates both)
                 run_tag = f"{agent}_{encoder}_asymmetric_{regime}_seed{seed}"
                 run_dir = self.log_root / run_tag
 

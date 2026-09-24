@@ -1,8 +1,8 @@
 """
 scripts/run_cvar_sweep_eval.py
 
-Round 4 workstream C: CVaR alpha sweep evaluation. QR-DQN and IQN were
-each trained at alpha in {0.05, 0.10, 0.25(existing, Round 3), 0.50, 1.0},
+CVaR alpha sweep evaluation. QR-DQN and IQN were
+each trained at alpha in {0.05, 0.10, 0.25(already trained separately), 0.50, 1.0},
 normal regime — this script evaluates all 5 alpha values per agent on the
 SAME held-out seed block scripts/run_holdout_eval.py uses (seed+80000+i),
 runs AS-recovery for each, and builds the CVaR efficient frontier (mean
@@ -14,7 +14,7 @@ f"_alpha{alpha:.2f}" convention from training/train.py, e.g. alpha=1.0 →
 "alpha1.00" not "alpha1").
 
 alpha=0.25 is NOT re-run here — its 15 held-out episodes already exist in
-holdout_eval.csv from Round 3/4's run_holdout_eval.py, using the identical
+holdout_eval.csv from scripts/run_holdout_eval.py, using the identical
 seed block, so it's pulled in from there instead of duplicating rollouts.
 
 Usage:
@@ -37,6 +37,7 @@ from training.evaluate import load_agent
 from training.factory import build_env
 from training.rollout import run_episode as rl_run_episode, find_best_checkpoint, find_latest_checkpoint
 from evaluation.as_recovery import run_recovery_all_agents, recovery_summary_df
+from evaluation.ablation import _run_tag as _ablation_run_tag
 from scripts.run_analysis import AGENT_CKPT_KWARGS, _MIN_EPISODES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +46,12 @@ OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
 
 BASE_SEED      = 42
 HOLDOUT_OFFSET = 80000  # matches scripts/run_holdout_eval.py — same seed block, comparable data
-AS_RECOVERY_SEED = 500  # matches scripts/run_analysis.py's run_as_recovery
+# Was 500 — with n_episodes=500 training runs use seed+1..seed+500 (43-542),
+# so seeds 500-514 replayed each agent's own training episodes 458-472
+# instead of unseen data (same bug found and fixed the same way in
+# scripts/run_encoder_ablation_eval.py). 95000 is disjoint from training,
+# RL-eval-during-training (10042-10044), and the holdout block (80042+).
+AS_RECOVERY_SEED = 95000
 
 AGENTS       = ["qrdqn", "iqn"]
 NEW_ALPHAS   = [0.05, 0.10, 0.50, 1.0]   # 0.25 already exists in holdout_eval.csv
@@ -54,8 +60,16 @@ REGIME       = "normal"
 
 
 def _run_tag(agent_type: str, alpha: float) -> str:
-    # Matches training/train.py's run_tag construction exactly.
-    return f"{agent_type}_handcrafted_asymmetric_{REGIME}_alpha{alpha:.2f}_seed{BASE_SEED}"
+    # Delegates to evaluation.ablation's run_tag builder (single source of
+    # truth matching training/train.py's convention) — this used to
+    # hand-build the tag missing sampling_tag, silently breaking every
+    # lookup here the moment that tag was introduced. sampling="per"
+    # explicitly: qrdqn/iqn.yaml set prioritized_replay=true for every alpha
+    # in this sweep, so the "_uniform" tag _ablation_run_tag defaults to
+    # points at a checkpoint/log dir that doesn't exist (same bug just found
+    # and fixed in scripts/run_analysis.py and scripts/build_dashboard_data.py).
+    return _ablation_run_tag(agent_type, "handcrafted", "asymmetric", REGIME, BASE_SEED,
+                              alpha=alpha, sampling="per")
 
 
 def _resolve_best_checkpoint(run_tag: str, ext: str) -> Path | None:

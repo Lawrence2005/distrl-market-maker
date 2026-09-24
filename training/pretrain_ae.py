@@ -37,10 +37,12 @@ Output: checkpoints/ae_encoder_<latent_dim>.pt
 
 Usage
 -----
-    # Train all three latent dim variants
+    # Train both latent dim variants (8 is the downstream default; 16 is
+    # kept as the other ablation point — 32 was dropped: with input_dim=20
+    # it's over-complete, i.e. no real bottleneck, see configs/encoder/
+    # autoencoder.yaml's comment for the numeric evidence)
     python training/pretrain_ae.py --latent_dim 16
     python training/pretrain_ae.py --latent_dim 8
-    python training/pretrain_ae.py --latent_dim 32
 
     # Full run with custom data path
     python training/pretrain_ae.py \\
@@ -77,7 +79,7 @@ class LOBEncoder(nn.Module):
     Parameters
     ----------
     input_dim  : int — 2 * n_levels (default 20 for K=10)
-    latent_dim : int — bottleneck dimension (ablate: 8, 16, 32)
+    latent_dim : int — bottleneck dimension (ablate: 8, 16)
     """
 
     def __init__(self, input_dim: int = 20, latent_dim: int = 16):
@@ -177,8 +179,10 @@ def load_snapshots(
     Load LOB snapshots from .npy file and split into train/val/test.
 
     The snapshot array produced by process_lobster.py has shape (N, 2K)
-    where each row is [ask_sizes_L1..LK, bid_sizes_L1..LK] normalised
-    to proportions (each side sums to 1).
+    where each row is [ask_sizes_L1..LK, bid_sizes_L1..LK] as RAW share
+    counts, not proportions — this function is what actually normalises
+    each side to sum to 1 (see below), matched at inference time by
+    encoders/autoencoder.py's AEEncoder._encode_batch().
 
     If the file does not exist, generates synthetic Gaussian data so the
     training loop can be exercised without real data.
@@ -208,7 +212,15 @@ def load_snapshots(
 
     input_dim = arr.shape[1]   # = 2 * n_levels
 
-    # Normalise rows to [0, 1] range (already proportions, but clip for safety)
+    # Normalise each side to sum to 1.0. scripts/collect_abides_snapshots.py
+    # now collects already-normalized data via training/rollout.py's
+    # get_encoder_input(), so this is idempotent for fresh data — but it
+    # also still correctly handles a raw-share-count .npy (e.g. an older
+    # cached file), so it stays here rather than being removed.
+    # encoders/autoencoder.py's AEEncoder._encode_batch() must apply the
+    # identical transform at inference time, or the frozen encoder sees
+    # inputs far outside the scale it was trained on — see that file's
+    # module docstring.
     n_levels = input_dim // 2
 
     asks, bids = arr[:, :n_levels], arr[:, n_levels:]
@@ -219,9 +231,14 @@ def load_snapshots(
 
     arr = np.concatenate([asks, bids], axis=1).astype(np.float32)
 
-    # Sanity checks
-    assert np.allclose(arr[:, :n_levels].sum(axis=1), 1.0, atol=1e-6)
-    assert np.allclose(arr[:, n_levels:].sum(axis=1), 1.0, atol=1e-6)
+    # Sanity checks — each side sums to 1.0, except a genuinely
+    # fully-empty side (both here and in get_encoder_input(), safe
+    # division leaves it at 0 rather than dropping the row), which
+    # legitimately sums to 0.
+    ask_sums = arr[:, :n_levels].sum(axis=1)
+    bid_sums = arr[:, n_levels:].sum(axis=1)
+    assert np.all(np.isclose(ask_sums, 1.0, atol=1e-6) | np.isclose(ask_sums, 0.0, atol=1e-6))
+    assert np.all(np.isclose(bid_sums, 1.0, atol=1e-6) | np.isclose(bid_sums, 0.0, atol=1e-6))
 
     dataset = TensorDataset(torch.from_numpy(arr))
 
@@ -336,7 +353,9 @@ def main(args: argparse.Namespace) -> None:
 
     latent_dims = (
         [args.latent_dim] if args.latent_dim is not None
-        else [8, 16, 32]
+        # 32 dropped: with input_dim=20 it's over-complete (no real
+        # bottleneck) — see configs/encoder/autoencoder.yaml's comment.
+        else [8, 16]
     )
 
     all_results = {}
@@ -457,7 +476,7 @@ if __name__ == "__main__":
         "--latent_dim",
         type=int,
         default=None,
-        help="Latent dimension to train (default: train all three: 8, 16, 32)",
+        help="Latent dimension to train (default: train both: 8, 16)",
     )
     parser.add_argument(
         "--epochs",

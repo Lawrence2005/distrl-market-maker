@@ -1,19 +1,30 @@
 """
 scripts/run_ood_transfer.py
 
-Round 4 OOD-transfer workstream: evaluate each agent's already-trained
-`low_vol` checkpoint (no new training) inside the `high_vol` environment,
-to measure out-of-distribution performance degradation under a harder
-regime the agent never saw during training.
+OOD-transfer evaluation: evaluate each agent's already-trained
+checkpoint (no new training) inside a DIFFERENT regime's environment than it
+was trained in, to measure out-of-distribution performance degradation under
+a regime shift the agent never saw during training.
+
+Scenarios (train_regime -> test_regime):
+    low_vol -> high_vol
+    normal  -> low_vol
+    normal  -> high_vol
 
 Uses a fresh, disjoint holdout seed block (`seed+90000+i`) — every other
 range is already spoken for: training (seed+1..seed+n_episodes), RL eval
 (seed+10000+{0,1,2}), AS-recovery (base seed 500), same-regime holdout
-(seed+80000+i).
+(seed+80000+i). The same seed block is reused across scenarios that share a
+test_regime (e.g. both high_vol scenarios use seeds 90042..90056 against the
+high_vol env) — that's intentional, not a collision: different scenarios
+evaluate different checkpoints, so identical held-out episodes make the
+comparison apples-to-apples rather than needing disjoint seeds per scenario.
 
-Reports, per agent:
-    in_dist  — held-out low_vol Sharpe (from evaluation/results_scaled_down_sweep/holdout_eval.csv)
-    ood      — held-out Sharpe of the SAME low_vol checkpoint, rolled out in high_vol
+Reports, per (agent, scenario):
+    in_dist  — held-out Sharpe in the TRAINING regime (from
+               evaluation/results_scaled_down_sweep/holdout_summary.csv)
+    ood      — held-out Sharpe of the SAME checkpoint, rolled out in the
+               TEST regime
     degradation_pct — (in_dist - ood) / (|in_dist| + eps), matching
                        evaluation/visualize.py's plot_ood_transfer convention.
 
@@ -38,8 +49,39 @@ from scripts.run_analysis import AGENT_CKPT_KWARGS, best_checkpoints, build_regi
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
 
-BASE_SEED      = 42
-OOD_OFFSET     = 90000  # disjoint from training/eval/AS-recovery/holdout (80000) blocks
+BASE_SEED  = 42
+OOD_OFFSET = 90000  # disjoint from training/eval/AS-recovery/holdout (80000) blocks
+
+TRANSFER_SCENARIOS = [
+    ("low_vol", "high_vol"),
+    ("normal", "low_vol"),
+    ("normal", "high_vol"),
+]
+
+
+def run_scenario(train_regime: str, test_regime: str, ood_seeds: list[int]) -> pd.DataFrame:
+    print(f"\n--- Scenario: {train_regime} -> {test_regime} ---")
+
+    # Source: each agent's already-trained BEST checkpoint from train_regime.
+    ckpts = best_checkpoints(train_regime)
+
+    rows = []
+    env = build_regime_env(test_regime, seed=BASE_SEED)
+    for agent_type, ckpt in ckpts.items():
+        agent, _ = load_agent(ckpt, agent_type=agent_type, encoder_type="handcrafted",
+                               **AGENT_CKPT_KWARGS[agent_type])
+        for i, seed in enumerate(ood_seeds):
+            t0 = time.time()
+            m = rl_run_episode(env, agent, "handcrafted", training=False, seed=seed)
+            rows.append({"train_regime": train_regime, "test_regime": test_regime,
+                         "model": agent_type, "seed": seed, "sharpe": m["sharpe"],
+                         "map": m["map"], "mdd": m["mdd"], "final_pnl": m["final_pnl"]})
+            print(f"  {agent_type:8s} ep {i+1:2d}/{len(ood_seeds)} "
+                  f"sharpe {m['sharpe']:+.3f}  ({time.time()-t0:.0f}s)  "
+                  f"ckpt={Path(ckpt).name}", flush=True)
+    env.close()
+
+    return pd.DataFrame(rows)
 
 
 def main() -> None:
@@ -51,55 +93,47 @@ def main() -> None:
     print(f"OOD holdout seed block: {ood_seeds[0]}..{ood_seeds[-1]} "
           f"({args.n_episodes} episodes, disjoint from every other seed range)")
 
-    # Source: each agent's already-trained BEST low_vol checkpoint.
-    low_vol_ckpts = best_checkpoints("low_vol")
+    ood_df = pd.concat(
+        [run_scenario(train_regime, test_regime, ood_seeds)
+         for train_regime, test_regime in TRANSFER_SCENARIOS],
+        ignore_index=True,
+    )
 
-    rows = []
-    env = build_regime_env("high_vol", seed=BASE_SEED)
-    for agent_type, ckpt in low_vol_ckpts.items():
-        agent, _ = load_agent(ckpt, agent_type=agent_type, encoder_type="handcrafted",
-                               **AGENT_CKPT_KWARGS[agent_type])
-        for i, seed in enumerate(ood_seeds):
-            t0 = time.time()
-            m = rl_run_episode(env, agent, "handcrafted", training=False, seed=seed)
-            rows.append({"model": agent_type, "seed": seed, "sharpe": m["sharpe"],
-                         "map": m["map"], "mdd": m["mdd"], "final_pnl": m["final_pnl"]})
-            print(f"  {agent_type:8s} ep {i+1:2d}/{args.n_episodes} "
-                  f"sharpe {m['sharpe']:+.3f}  ({time.time()-t0:.0f}s)  "
-                  f"ckpt={Path(ckpt).name}", flush=True)
-    env.close()
-
-    ood_df = pd.DataFrame(rows)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ood_df.to_csv(OUT_DIR / "ood_transfer_episodes.csv", index=False)
 
-    ood_summary = ood_df.groupby("model")["sharpe"].agg(ood_sharpe="mean", ood_std="std").reset_index()
+    ood_summary = (
+        ood_df.groupby(["train_regime", "test_regime", "model"])["sharpe"]
+        .agg(ood_sharpe="mean", ood_std="std")
+        .reset_index()
+    )
 
-    # In-distribution reference: the SAME low_vol checkpoints' already-computed
-    # held-out low_vol Sharpe from holdout_summary.csv (rl rows, low_vol regime,
-    # "low" as parsed by evaluation.metrics — but holdout_summary.csv stores the
-    # regime string as passed to run_holdout_eval.py, i.e. "low_vol" verbatim).
+    # In-distribution reference: each scenario's SAME checkpoints' already-
+    # computed held-out Sharpe IN THEIR OWN TRAINING REGIME, from
+    # holdout_summary.csv (rl rows). Joined per-scenario on train_regime so
+    # e.g. the normal->low_vol and normal->high_vol scenarios both reference
+    # the normal-regime in-distribution number, not low_vol's.
     holdout_summary_path = OUT_DIR / "holdout_summary.csv"
     if not holdout_summary_path.exists():
         raise FileNotFoundError(
             f"{holdout_summary_path} not found — run scripts/run_holdout_eval.py first "
-            "(in_dist reference numbers come from its low_vol rl rows)."
+            "(in_dist reference numbers come from its per-regime rl rows)."
         )
     holdout_summary = pd.read_csv(holdout_summary_path)
-    in_dist = holdout_summary[
-        (holdout_summary["type"] == "rl") & (holdout_summary["regime"] == "low_vol")
-    ][["model", "sharpe_mean"]].rename(columns={"sharpe_mean": "in_dist_sharpe"})
+    in_dist = holdout_summary[holdout_summary["type"] == "rl"][
+        ["model", "regime", "sharpe_mean"]
+    ].rename(columns={"regime": "train_regime", "sharpe_mean": "in_dist_sharpe"})
 
-    transfer_df = in_dist.merge(ood_summary, on="model", how="inner")
+    transfer_df = in_dist.merge(ood_summary, on=["train_regime", "model"], how="inner")
     transfer_df["degradation_pct"] = (
         (transfer_df["in_dist_sharpe"] - transfer_df["ood_sharpe"])
         / (transfer_df["in_dist_sharpe"].abs() + 1e-10) * 100.0
     )
-    transfer_df = transfer_df.sort_values("degradation_pct")
+    transfer_df = transfer_df.sort_values(["train_regime", "test_regime", "degradation_pct"])
 
     transfer_df.to_csv(OUT_DIR / "ood_transfer_summary.csv", index=False)
 
-    print(f"\n{'='*78}\nOOD TRANSFER SUMMARY — low_vol-trained agents evaluated in high_vol\n{'='*78}")
+    print(f"\n{'='*78}\nOOD TRANSFER SUMMARY\n{'='*78}")
     print(transfer_df.to_string(index=False))
     print(f"\nSaved → {OUT_DIR / 'ood_transfer_episodes.csv'}, {OUT_DIR / 'ood_transfer_summary.csv'}")
 

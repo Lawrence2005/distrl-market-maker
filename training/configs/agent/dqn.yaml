@@ -10,6 +10,14 @@ epsilon_start: 1.0
 epsilon_end: 0.05
 epsilon_decay_steps: 50000
 
+# All agents use real prioritized replay uniformly across this project
+# (per explicit user decision — no run should use uniform sampling).
+# Stated explicitly rather than left to training/factory.py's default
+# (also True) so this is never ambiguous again the way it was earlier this
+# session, when this file omitted the key and DQN silently inherited
+# whatever the factory's fallback happened to be.
+prioritized_replay: true
+
 # Huber-loss threshold on the TD error. The old default (1.0) was never
 # rescaled when env/base.yaml's order_size went 1->100 shares — TD errors
 # scale ~linearly with order_size (same as rewards/Q-values), so with the

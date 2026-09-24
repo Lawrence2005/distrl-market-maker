@@ -29,6 +29,7 @@ from training.factory import build_env
 from training.rollout import find_best_checkpoint, find_latest_checkpoint
 from evaluation.as_recovery import run_recovery_all_agents, recovery_summary_df
 from evaluation.metrics import summary_table
+from evaluation.ablation import _run_tag as _ablation_run_tag
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR   = PROJECT_ROOT / "training" / "configs"
@@ -44,11 +45,6 @@ AGENT_CKPT_KWARGS = {
     "iqn":   dict(hidden_dim=256, n_quantile_samples=16, embedding_dim=32),
 }
 
-# alpha=0.25 for both qrdqn and iqn in this sweep (Round 3 — the
-# flash_crash-specific alpha=0.05 override no longer applies, that regime
-# was removed).
-_ALPHA_TAG = "_alpha0.25"
-
 # Matches training.configs.config.yaml's early_stopping_min_episodes default
 # — the epsilon-annealing burn-in floor, reused here so "best checkpoint"
 # selection can't pick a lucky pre-convergence eval draw (see
@@ -57,8 +53,18 @@ _MIN_EPISODES = 150
 
 
 def _run_tag(agent_type: str, regime: str) -> str:
-    alpha_tag = _ALPHA_TAG if agent_type in ("qrdqn", "iqn") else ""
-    return f"{agent_type}_handcrafted_asymmetric_{regime}{alpha_tag}_seed42"
+    # Delegates to evaluation.ablation's run_tag builder (single source of
+    # truth matching training/train.py's convention: alpha=0.25 for
+    # qrdqn/iqn in this sweep). sampling="per" explicitly — this campaign's
+    # dqn/qrdqn/iqn.yaml all set prioritized_replay=true and no uniform
+    # variant was trained (that stale "uniform" default here — inherited
+    # from _ablation_run_tag's own default — silently pointed every
+    # dqn/qrdqn/iqn lookup at a checkpoint dir that doesn't exist,
+    # returning None from _resolve_best_checkpoint for all three agents
+    # across every consumer: run_analysis.py's AS-recovery/model-comparison
+    # and run_ood_transfer.py's best_checkpoints()).
+    return _ablation_run_tag(agent_type, "handcrafted", "asymmetric", regime, 42,
+                              sampling="per")
 
 
 def _checkpoint_dir(agent_type: str, regime: str) -> Path:
@@ -71,14 +77,14 @@ def _resolve_best_checkpoint(agent_type: str, regime: str) -> Path | None:
     patience-based early stopping lets training run `patience` checkpoints
     past a peak before stopping, so the latest/final checkpoint can be a
     materially degraded policy relative to what the agent actually reached
-    (see the "peak vs. final" drift analysis on the Round 3 dashboard —
+    (see the "peak vs. final" drift analysis on the dashboard —
     e.g. qrdqn/normal peaked at eval Sharpe +4.05 and ended its last 3
     checkpoints averaging -0.18).
 
     Resolution order:
     1. best.pt/best.npz in the checkpoint dir (runs trained after train.py
        started tracking this explicitly).
-    2. For runs trained before that (all of Round 3): read eval_history.json,
+    2. For runs trained before that: read eval_history.json,
        find the episode with the highest eval Sharpe, and use the periodic
        ep-numbered checkpoint already saved at that episode (ckpt_every ==
        eval_every == 25 for this sweep, so one exists for every eval point).
@@ -163,8 +169,16 @@ def run_as_recovery(regime: str) -> pd.DataFrame:
         agents[agent_type] = agent
         print(f"  {agent_type}: {ckpt}")
 
-    env = build_regime_env(regime, seed=500)
-    results = run_recovery_all_agents(agents, env, enc_type="handcrafted", n_episodes=15, seed=500)
+    # AS_RECOVERY_SEED=95000: was 500, which for any n_episodes=500 training
+    # run overlaps training seeds 43-542 (base 500 + 15 episodes = 500-514,
+    # replaying training episodes 458-472 instead of unseen data). 95000 is
+    # disjoint from training, RL-eval-during-training (10042-10044), and the
+    # holdout block (80042+) — matches the fix applied to
+    # scripts/run_encoder_ablation_eval.py and run_cvar_sweep_eval.py.
+    AS_RECOVERY_SEED = 95000
+    env = build_regime_env(regime, seed=AS_RECOVERY_SEED)
+    results = run_recovery_all_agents(agents, env, enc_type="handcrafted",
+                                       n_episodes=15, seed=AS_RECOVERY_SEED)
     env.close()
 
     df = recovery_summary_df(results)

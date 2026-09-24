@@ -1,6 +1,6 @@
 # Distributional Deep RL Market Maker
 
-> 10-week research project — University of Chicago  
+> 10-week research project
 > Building and scientifically evaluating a distributional reinforcement learning market maker in a high-fidelity limit order book simulator.
 
 ## Project Overview
@@ -38,8 +38,7 @@ This project builds a distributional RL market maker using QR-DQN and IQN with a
 ├── encoders/       # Snapshot state representation modules (handcrafted, CNN, AE)
 ├── agents/         # RL agent implementations (snapshot + recurrent variants)
 ├── training/       # Training loops and configs
-├── evaluation/     # Metrics, analysis, visualization
-├── experiments/    # Experiment configs and results
+├── evaluation/     # Metrics, analysis, visualization, results (see evaluation/results_scaled_down_sweep/)
 ├── data/           # LOBSTER / crypto data + processing
 ├── notebooks/      # Exploratory analysis and figures
 ├── tests/          # Unit tests
@@ -56,15 +55,44 @@ pip install -r requirements.txt
 ```
 
 ## Key Results
-*(populated as project progresses)*
+
+Full results, methodology caveats, and reproduction commands:
+[`evaluation/results_scaled_down_sweep/README.md`](evaluation/results_scaled_down_sweep/README.md).
+Interactive dashboard (training/eval curves, held-out comparison, AS-recovery,
+significance tests, CVaR frontier, encoder ablation, OOD transfer, stylized facts):
+ask in a Claude Code session with this project's conversation history for the
+current link, or rebuild via `scripts/build_dashboard_data.py`.
+
+Headline findings from the local (scaled-down `rmsc04`, single-seed) sweep across
+low_vol/normal/high_vol regimes, 15-episode held-out evaluation:
+
+- **QR-DQN is the only agent that significantly beats GLFT in all three regimes**
+  (paired Wilcoxon p<0.0001 each: low_vol +2.85 vs. GLFT +1.24, normal +4.19 vs.
+  −1.16, high_vol +1.79 vs. −2.18). DQN beats GLFT in normal/high_vol but is
+  significantly worse than GLFT in low_vol, the one regime a classical baseline
+  still wins outright.
+- **Hand-engineered features beat every learned encoder tried** (CNN, autoencoder,
+  LSTM-recurrent) by a wide, statistically significant margin (all p<0.0001) —
+  none of the representation-learning alternatives closed the gap at this
+  project's training budget.
+- **QR-DQN is the most robust out-of-distribution generalizer**: the only agent
+  that stays profitable when a checkpoint trained in one regime is dropped into
+  another without fine-tuning, across all 3 transfer scenarios tested.
+- The CVaR alpha sweep does **not** trace the textbook risk-return efficient
+  frontier at this sample size (single seed per α) — see the results doc for the
+  non-monotonic detail and why more seeds would be needed to separate signal from
+  noise.
+- The live ABIDES-Gym simulator passes 4–5 of 5 stylized-facts checks in every
+  regime under a random policy, but was calibrated against synthetic order flow,
+  never real LOBSTER data (see "Future Work").
 
 ## Future Work
 
-Neither item below invalidates the current results — both would enrich/strengthen them further:
+Items below would enrich/strengthen them further:
 
 - **Re-run the same ablations and simulations at ABIDES's original, larger background-agent population.** The current sweep runs on a scaled-down `rmsc04` config (`abides-jpmc-public/abides-markets/abides_markets/configs/rmsc04.py`'s `build_config()` defaults ~23 background agents, vs. the reference spec documented in that same file's header — ~1,117 agents: 1000 noise, 102 value, 12 momentum), chosen for tractability on local single-machine hardware (WSL, ~9.7GB RAM). Re-running at the original scale would test whether current findings hold under a denser, more realistic market population, at the cost of substantially longer simulation time (ABIDES is a discrete-event simulator, so wall-clock cost scales with agent count/wakeup volume).
 - **Re-run on real historic LOBSTER tick data**, once obtained. Every result in this project runs on ABIDES's own synthetic `rmsc04` order flow — real LOBSTER data was never obtained, and this project's own synthetic-LOBSTER calibration pipeline was archived (see `archive/lobster_calibration/`) after being found unwired into the live simulator. Validating the same agents/ablations against a simulator actually calibrated to real historical market data would make the empirical claims here meaningfully more robust.
 
 ## References
 See [`docs/literature/`](docs/literature/) for annotated bibliography.
-See [`experiments/`](experiments/) for all run configs and results.
+See [`evaluation/results_scaled_down_sweep/`](evaluation/results_scaled_down_sweep/) for all run results and reproduction commands.

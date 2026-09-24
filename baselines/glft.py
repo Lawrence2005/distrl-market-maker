@@ -306,11 +306,16 @@ def delta_ask(
     delta_a*(t, q) = (1/kappa)*ln(v_q(t)/v_{q-1}(t)) + xi/2
                    + (1/gamma)*ln(1 + gamma/kappa)
 
-    When q < 0 (short inventory): v_q/v_{q-1} < 1, pushing ask closer
-    to mid (less aggressive selling -- want to buy not sell).
-    When q > 0 (long inventory): v_q/v_{q-1} > 1, pushing ask further
-    from mid... wait, this is reversed. See inventory skew direction note
-    in delta_bid above.
+    Mirrors delta_bid's inventory-reduction intent for the sell side:
+    when q > 0 (long inventory), the ask is pushed CLOSER to mid (more
+    aggressive selling — want to reduce the long position); when q < 0
+    (short inventory), the ask is pushed FURTHER from mid (less
+    aggressive selling — already short, don't want to sell more).
+    (A previous version of this docstring had these two directions
+    backwards and flagged its own uncertainty about it; the ODE solution
+    for v_q — symmetric and strictly decreasing in |q| — was solved
+    numerically and confirmed the code above already implements the
+    economically-correct direction stated here. Only the prose was wrong.)
 
     Undefined at q = -Q_max (inventory limit: no more selling).
     Returns np.inf in that case.

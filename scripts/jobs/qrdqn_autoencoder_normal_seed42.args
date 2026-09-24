@@ -1,8 +1,8 @@
 /home/lawre/distrl-logs/qrdqn_autoencoder_normal_seed42.out
 agent=qrdqn
 encoder=autoencoder
-encoder.pretrained_weights=checkpoints/ae_encoder_32.pt
-encoder.latent_dim=32
+encoder.pretrained_weights=checkpoints/ae_encoder_8.pt
+encoder.latent_dim=8
 reward=asymmetric
 env.regime=normal
 env.use_abides=true

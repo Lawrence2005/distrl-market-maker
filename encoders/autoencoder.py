@@ -29,19 +29,33 @@ These are NOT the same as the handcrafted obs vector (18-dim). The AE
 encoder expects raw LOB depth snapshots — ask_sizes[L1..LK] + bid_sizes[L1..LK]
 — as produced by _parse_abides_step()["lob_snapshot"], not _get_obs().
 
+training/pretrain_ae.py's load_snapshots() normalizes each side (asks,
+bids) of every training row to sum to 1.0 before training — the frozen
+encoder was never shown raw share counts. AEEncoder._encode_batch()
+applies that same per-side normalization at inference time (see
+_normalize()) so live LOB snapshots — raw counts, commonly in the
+hundreds — aren't fed to the encoder wildly out of the distribution it
+was calibrated on. Don't remove this without also removing the
+normalization in load_snapshots(), or the two will disagree again.
+
 In the RL training loop, the LOB snapshot must be extracted separately
 from the info dict and passed to this encoder. The handcrafted features
 from _get_obs() are NOT fed to the AE encoder.
 
-latent_dim property returns the bottleneck dimension (8, 16, or 32)
+latent_dim property returns the bottleneck dimension (8 or 16)
 so that RecurrentBase can set lstm.input_size dynamically.
 
 Ablation
 --------
-Three variants, each with its own checkpoint:
-    checkpoints/ae_encoder_8.pt   → latent_dim=8
-    checkpoints/ae_encoder_16.pt  → latent_dim=16  (default)
-    checkpoints/ae_encoder_32.pt  → latent_dim=32
+Two variants, each with its own checkpoint:
+    checkpoints/ae_encoder_8.pt   → latent_dim=8   (downstream default)
+    checkpoints/ae_encoder_16.pt  → latent_dim=16
+
+latent_dim=32 was dropped from the ablation: with input_dim=20, it's
+over-complete (exceeds input_dim, so there's no real information
+bottleneck) — see training/configs/encoder/autoencoder.yaml's comment
+for the numeric evidence (near-zero reconstruction loss, the signature
+of a trivial near-identity solution rather than learned compression).
 
 Reference
 ---------
@@ -115,14 +129,35 @@ class AEEncoder(BaseEncoder):
         Parameters
         ----------
         x : Tensor shape (B, input_dim) or (B, T, input_dim)
-            Raw LOB depth snapshot — ask_sizes[L1..LK] + bid_sizes[L1..LK].
-            NOT the handcrafted obs vector from _get_obs().
+            Raw LOB depth snapshot (share counts) — ask_sizes[L1..LK] +
+            bid_sizes[L1..LK]. NOT the handcrafted obs vector from
+            _get_obs().
 
         Returns
         -------
         Tensor shape (B, latent_dim) or (B, T, latent_dim)
         """
-        return self._encoder(x)
+        return self._encoder(self._normalize(x))
+
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Rescale each side (asks, bids) to sum to 1.0 along the level axis.
+
+        training/pretrain_ae.py's load_snapshots() normalizes each side of
+        every training row to proportions before the AE ever sees it — the
+        frozen encoder's weights are calibrated to that [0,1]-ish,
+        sums-to-1 input distribution, not to raw share counts (which run
+        into the hundreds on a real LOB, ~2-3 orders of magnitude larger).
+        This mirrors that exact transform at inference time so the encoder
+        isn't fed wildly out-of-distribution input. Levels with zero
+        volume on both sides (e.g. this fully padded/empty book) fall back
+        to zeros rather than NaN.
+        """
+        n = self.input_dim // 2
+        asks, bids = x[..., :n], x[..., n:]
+        asks = asks / asks.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        bids = bids / bids.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        return torch.cat([asks, bids], dim=-1)
 
     def train(self, mode: bool = True) -> "AEEncoder":
         """

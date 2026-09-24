@@ -1,10 +1,10 @@
 """
 scripts/run_encoder_ablation_eval.py
 
-Round 4 workstream D: encoder ablation evaluation. QR-DQN was trained with
-3 new encoders (cnn, autoencoder, recurrent-handcrafted) at alpha=0.25,
+Encoder ablation evaluation. QR-DQN was trained with
+3 additional encoders (cnn, autoencoder, recurrent-handcrafted) at alpha=0.25,
 normal regime, alongside the existing handcrafted-snapshot result already
-on the dashboard. This script evaluates all 3 new encoders on the SAME
+on the dashboard. This script evaluates all 3 additional encoders on the SAME
 held-out seed block scripts/run_holdout_eval.py uses (seed+80000+i), runs
 AS-recovery for each, and runs a paired significance test against the
 EXISTING handcrafted-QRDQN-normal-alpha0.25 held-out episodes (already in
@@ -40,25 +40,39 @@ OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
 
 BASE_SEED         = 42
 HOLDOUT_OFFSET    = 80000  # matches scripts/run_holdout_eval.py
-AS_RECOVERY_SEED  = 500
+# Was 500 — with n_episodes=500 training runs use seed+1..seed+500 (43-542),
+# so seeds 500-514 (base 500 + 15 AS-recovery episodes) exactly replayed
+# each agent's own training episodes 458-472, rather than unseen market
+# realizations. 95000 is disjoint from training (43 up to 2042 even at
+# config.yaml's top-level default n_episodes=2000), RL eval-during-training
+# (10042-10044), and the holdout block (80042+).
+AS_RECOVERY_SEED  = 95000
 REGIME            = "normal"
 BASELINE_ENCODER  = "handcrafted"  # the comparison point, already in holdout_eval.csv
 
 # (label, run_tag, load_agent kwargs beyond agent_type/n_actions)
 ENCODERS = {
     "cnn": dict(
-        run_tag="qrdqn_cnn_asymmetric_normal_alpha0.25_seed42",
+        # _per, not _uniform: this is the fresh checkpoint from the current
+        # full-corpus retrain campaign (qrdqn defaults to real PER now).
+        run_tag="qrdqn_cnn_asymmetric_normal_alpha0.25_per_seed42",
         encoder_type="cnn",
-        load_kwargs=dict(hidden_dim=256, n_quantiles=32, n_levels=10, latent_dim=16),
+        # latent_dim=8, matching encoders/cnn.yaml — capacity-matched
+        # against the AE encoder below (see that file's comment for why).
+        load_kwargs=dict(hidden_dim=256, n_quantiles=32, n_levels=10, latent_dim=8),
     ),
     "autoencoder": dict(
-        run_tag="qrdqn_autoencoder_asymmetric_normal_alpha0.25_seed42",
+        run_tag="qrdqn_autoencoder_asymmetric_normal_alpha0.25_per_seed42",
         encoder_type="autoencoder",
-        load_kwargs=dict(hidden_dim=256, n_quantiles=32, latent_dim=32,
-                          ae_checkpoint=str(PROJECT_ROOT / "checkpoints" / "ae_encoder_32.pt")),
+        # latent_dim=8: input_dim is 20, so the old latent_dim=32 was an
+        # over-complete, non-bottlenecked autoencoder (see
+        # encoders/autoencoder.yaml's comment for the numeric evidence).
+        load_kwargs=dict(hidden_dim=256, n_quantiles=32, latent_dim=8,
+                          ae_checkpoint=str(PROJECT_ROOT / "checkpoints" / "ae_encoder_8.pt")),
     ),
     "recurrent": dict(
-        run_tag="qrdqn_handcrafted_asymmetric_normal_recurrent_alpha0.25_seed42",
+        # _per, not _uniform: fresh checkpoint from the current retrain.
+        run_tag="qrdqn_handcrafted_asymmetric_normal_recurrent_alpha0.25_per_seed42",
         encoder_type="handcrafted",
         load_kwargs=dict(hidden_dim=256, n_quantiles=32, use_lstm=True),
     ),
@@ -142,7 +156,15 @@ def load_baseline_holdout() -> pd.DataFrame:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--n_episodes", type=int, default=15)
+    p.add_argument("--skip", nargs="+", default=[],
+                   help="Encoder names to skip (e.g. --skip autoencoder), "
+                        "for when a checkpoint isn't ready yet — its rows "
+                        "just won't appear in the output, no placeholder.")
     args = p.parse_args()
+
+    encoders_to_run = {k: v for k, v in ENCODERS.items() if k not in args.skip}
+    if args.skip:
+        print(f"Skipping: {', '.join(args.skip)}")
 
     holdout_seeds = [BASE_SEED + HOLDOUT_OFFSET + i for i in range(args.n_episodes)]
     print(f"Holdout seed block: {holdout_seeds[0]}..{holdout_seeds[-1]} "
@@ -152,11 +174,11 @@ def main() -> None:
     all_rows = list(baseline_df.to_dict("records"))
     as_recovery_frames = []
 
-    for name, spec in ENCODERS.items():
+    for name, spec in encoders_to_run.items():
         print(f"\n{'='*78}\nHOLDOUT EVAL — QR-DQN + {name} encoder\n{'='*78}")
         all_rows.extend(run_holdout_for_encoder(name, spec, holdout_seeds))
 
-    for name, spec in ENCODERS.items():
+    for name, spec in encoders_to_run.items():
         print(f"\n{'='*78}\nAS-RECOVERY — QR-DQN + {name} encoder\n{'='*78}")
         df = run_as_recovery_for_encoder(name, spec)
         if df is not None:
@@ -175,7 +197,7 @@ def main() -> None:
     # ── Significance test: each new encoder vs. handcrafted, paired on seed ──
     sig_rows = []
     baseline_by_seed = baseline_df.set_index("seed")["sharpe"]
-    for name in ENCODERS:
+    for name in encoders_to_run:
         enc_rows = holdout_df[holdout_df["encoder"] == name].set_index("seed")["sharpe"]
         if enc_rows.empty:
             continue

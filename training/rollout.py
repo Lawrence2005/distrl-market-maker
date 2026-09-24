@@ -49,7 +49,8 @@ def get_encoder_input(
 
     HandcraftedEncoder : obs vector (18-dim) from _get_obs()
     CNNEncoder         : LOB depth snapshot (20-dim) from info["lob_snapshot"]
-    AEEncoder          : LOB depth snapshot (20-dim) from info["lob_snapshot"]
+    AEEncoder          : LOB depth snapshot (20-dim) from info["lob_snapshot"],
+                          per-side normalized (see below)
 
     Parameters
     ----------
@@ -65,16 +66,36 @@ def get_encoder_input(
         return obs
 
     # CNN and AE both use raw LOB depth snapshot
+    n_levels = 10
     snap = info.get("lob_snapshot", {})
-    bid_sizes = snap.get("bid_sizes", [])
-    ask_sizes = snap.get("ask_sizes", [])
+    bid_sizes = list(snap.get("bid_sizes", []))
+    ask_sizes = list(snap.get("ask_sizes", []))
 
-    if len(bid_sizes) > 0 and len(ask_sizes) > 0:
-        snapshot = np.array(ask_sizes + bid_sizes, dtype=np.float32)
-    else:
-        # LOB not yet populated (early episode) — return zeros
-        n_levels = 10
-        snapshot = np.zeros(2 * n_levels, dtype=np.float32)
+    # Real order books are frequently thinner than n_levels on one or both
+    # sides (or fully empty early in an episode) — pad each side to a fixed
+    # n_levels independently so the encoder always receives a constant-shape
+    # 2*n_levels vector. Truncate defensively in case a side ever exceeds
+    # n_levels (shouldn't happen, since _parse_abides_step already slices to
+    # K=n_lob_levels, but keeps this robust to a config mismatch).
+    bid_sizes = (bid_sizes + [0.0] * n_levels)[:n_levels]
+    ask_sizes = (ask_sizes + [0.0] * n_levels)[:n_levels]
+
+    if enc_type == "autoencoder":
+        # Rescale each side to sum to 1.0 — mirrors
+        # encoders/autoencoder.py::AEEncoder._normalize() exactly (same
+        # 1e-8 floor), so AE-pretraining data collected via this function
+        # (scripts/collect_abides_snapshots.py) already matches the
+        # distribution the frozen encoder sees at RL-rollout time. Safe
+        # division means a fully-empty side — which occurs occasionally
+        # under a random exploration policy — yields zeros instead of
+        # NaN/inf, so callers no longer need to drop these snapshots as
+        # un-normalizable.
+        ask_sum = max(sum(ask_sizes), 1e-8)
+        bid_sum = max(sum(bid_sizes), 1e-8)
+        ask_sizes = [v / ask_sum for v in ask_sizes]
+        bid_sizes = [v / bid_sum for v in bid_sizes]
+
+    snapshot = np.array(ask_sizes + bid_sizes, dtype=np.float32)
 
     return snapshot
 
@@ -149,7 +170,8 @@ def run_episode(
     agent.reset_hidden(batch_size=1)
 
     from agents.ppo import PPOAgent
-    is_ppo = isinstance(agent, PPOAgent)
+    is_ppo   = isinstance(agent, PPOAgent)
+    is_sarsa = getattr(agent, 'is_online', False)
 
     step_pnls   = []
     inventories = []
@@ -161,6 +183,12 @@ def run_episode(
     prev_inv = 0
     step_idx = 0
 
+    # SARSA(λ)'s on-policy action, carried from one iteration's train_step
+    # bootstrap into the next iteration's actually-executed action — see
+    # SARSAAgent.train_step()'s next_action docstring for why this must be
+    # the SAME sample, not independently re-drawn each place it's needed.
+    pending_sarsa_action = None
+
     terminated = truncated = False
 
     while not (terminated or truncated):
@@ -168,6 +196,8 @@ def run_episode(
         enc_input = get_encoder_input(obs, info, enc_type)
         if is_ppo:
             action, value, log_prob = agent.act_with_value(enc_input)
+        elif is_sarsa and training and pending_sarsa_action is not None:
+            action = pending_sarsa_action
         else:
             action = agent.act(enc_input, greedy=not training)
 
@@ -185,14 +215,20 @@ def run_episode(
         cum_pnls.append(cum_pnl)
 
         if training:
-            if getattr(agent, 'is_online', False):
-                # SARSA: pass transition directly
+            if is_sarsa:
+                done = terminated or truncated
+                # Sample a' ONCE here — reused both for this update's
+                # bootstrap and as next iteration's actually-executed
+                # action (see docstrings on SARSAAgent.train_step and
+                # pending_sarsa_action above).
+                next_action = None if done else agent.act(next_enc, greedy=not training)
                 loss = agent.train_step(
                     obs=enc_input, action=action, reward=reward,
-                    next_obs=next_enc, done=terminated or truncated,
+                    next_obs=next_enc, next_action=next_action, done=done,
                 )
                 if loss is not None:
                     losses.append(loss)
+                pending_sarsa_action = next_action
             elif is_ppo:
                 # PPO: store with value and log_prob, no per-step update
                 agent.observe(enc_input, action, reward, next_enc,
@@ -322,6 +358,15 @@ def load_checkpoint(agent, path):
         })
         return meta["episode"]
     else:
-        ckpt = torch.load(path, map_location="cpu")
+        # weights_only=False: these are our own checkpoint files, never
+        # external/untrusted ones, and the replay-buffer state embedded in
+        # agent_state (numpy arrays + Transition namedtuples, since this
+        # session's checkpointing fix) isn't in torch's weights_only=True
+        # (the default since torch 2.6) allowed-globals list — the default
+        # raises UnpicklingError on load for exactly the checkpoints this
+        # fix produces. Caught via an actual on-disk save/load smoke test,
+        # not by the test suite, which only round-trips state_dict() in
+        # memory and never exercises torch.load from a real file.
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
         agent.load_state_dict(ckpt["agent_state"])
         return ckpt["episode"]

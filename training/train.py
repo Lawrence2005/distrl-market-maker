@@ -189,9 +189,10 @@ def train(cfg: DictConfig) -> float:
 
     agent = build_agent(
         cfg.agent, encoder, n_actions, alpha, device,
-        enc_type = cfg.encoder.type,
-        seed     = seed,
-        use_lstm = use_lstm,
+        enc_type     = cfg.encoder.type,
+        seed         = seed,
+        use_lstm     = use_lstm,
+        warmup_steps = int(cfg.training.get("warmup_steps", 0)),
     )
     agent = wrap_policy(agent, cfg.get("policy", {}), alpha)
     env   = build_env(cfg.env, cfg.reward, seed)
@@ -209,14 +210,41 @@ def train(cfg: DictConfig) -> float:
     regime       = cfg.env.get("regime", "base") or "base"
     variant_tag  = "_recurrent" if use_lstm else ""
     alpha_tag    = f"_alpha{alpha:.2f}" if agent_type in ("qrdqn", "iqn") else ""
+    # Sampling-scheme ablation axis (uniform vs. prioritized sequence
+    # sampling — see training/replay_buffer.py's sample_sequences()).
+    # Only meaningful for the three replay-buffer agents; SARSA/PPO don't
+    # have a prioritized_replay config key at all.
+    sampling_tag = ""
+    if agent_type in ("dqn", "qrdqn", "iqn"):
+        prioritized  = bool(cfg.agent.get("prioritized_replay", True))
+        sampling_tag = "_per" if prioritized else "_uniform"
     run_tag      = (
         f"{agent_type}_{encoder_type}_{reward_type}"
-        f"_{regime}{variant_tag}{alpha_tag}_seed{seed}"
+        f"_{regime}{variant_tag}{alpha_tag}{sampling_tag}_seed{seed}"
     )
 
     project_root = Path(__file__).resolve().parents[1]
     ckpt_dir     = project_root / cfg.training.checkpoint_dir / run_tag
     log_dir      = project_root / cfg.training.log_dir / run_tag
+
+    # Resume safety net: a run started before sampling_tag existed in the
+    # run_tag wrote into a directory without it (e.g. the auto-restart
+    # supervisor's retry re-invokes this file fresh, so a code update
+    # mid-run changes what run_tag it computes). If resuming and the newly
+    # tagged path has no checkpoint yet but the untagged legacy path does,
+    # keep using the legacy path instead of silently starting over empty.
+    if bool(cfg.training.get("resume", False)) and sampling_tag:
+        legacy_run_tag = (
+            f"{agent_type}_{encoder_type}_{reward_type}"
+            f"_{regime}{variant_tag}{alpha_tag}_seed{seed}"
+        )
+        legacy_ckpt_dir = project_root / cfg.training.checkpoint_dir / legacy_run_tag
+        if (find_latest_checkpoint(legacy_ckpt_dir) is not None
+                and find_latest_checkpoint(ckpt_dir) is None):
+            run_tag  = legacy_run_tag
+            ckpt_dir = legacy_ckpt_dir
+            log_dir  = project_root / cfg.training.log_dir / legacy_run_tag
+
     log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Run tag:    {run_tag}", flush=True)
@@ -371,7 +399,13 @@ def train(cfg: DictConfig) -> float:
                 print(f"  new best eval Sharpe → {best_path}", flush=True)
 
             if early_stopping and ep >= es_min_episodes:
-                _, stale_checkpoints = _early_stop_state(eval_history, es_smooth_window, es_min_delta)
+                # Same burn-in floor as the best-checkpoint gate above: a
+                # lucky high-variance eval from before es_min_episodes (agent
+                # still mostly-random) must not count as "best" for patience
+                # bookkeeping either, or it can absorb the entire patience
+                # budget before the gate even opens.
+                gated_history = [e for e in eval_history if e["episode"] >= es_min_episodes]
+                _, stale_checkpoints = _early_stop_state(gated_history, es_smooth_window, es_min_delta)
                 if stale_checkpoints >= es_patience:
                     print(
                         f"\nEarly stopping at episode {ep}: smoothed eval Sharpe "

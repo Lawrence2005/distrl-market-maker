@@ -387,6 +387,14 @@ def load_all_runs(
             df = load_train_history(run_dir)
         except FileNotFoundError:
             continue
+        except ValueError:
+            # scripts/run_multiagent_tournament.py writes train_history.json
+            # as {"agents": [...], "market": [...]} (per-agent + per-episode
+            # market-quality records, different lengths) — a different
+            # schema from every single-agent run's flat list-of-episode-dicts
+            # that pd.DataFrame(history) above expects. Not this loader's
+            # concern; skip it the same way a missing file is skipped.
+            continue
 
         # Parse run_tag: {agent}_{encoder}_{reward}_{regime}_seed{seed}
         tag   = run_dir.name

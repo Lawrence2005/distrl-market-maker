@@ -186,6 +186,9 @@ class QRDQNAgent(AgentBase):
     epsilon_decay_steps: int       — ε decay steps (default 50_000)
     buffer_capacity    : int       — replay buffer size (default 100_000)
     prioritized        : bool      — use PER (default True)
+    warmup_steps       : int       — env steps to collect before the first
+                                     gradient update (default 0 = none;
+                                     cfg.training.warmup_steps)
     device             : str       — 'cpu' or 'cuda'
     """
 
@@ -211,8 +214,10 @@ class QRDQNAgent(AgentBase):
         buffer_capacity:     int   = 100_000,
         prioritized:         bool  = True,
         use_lstm:            bool  = True,
+        warmup_steps:        int   = 0,
         device:              str   = "cpu",
     ):
+        self.warmup_steps        = warmup_steps
         self.n_actions           = n_actions
         self.n_quantiles         = n_quantiles
         self.gamma               = gamma
@@ -429,6 +434,7 @@ class QRDQNAgent(AgentBase):
         target: torch.Tensor,
         taus:  torch.Tensor,
         kappa: float = 1.0,
+        reduce: bool = True,
     ) -> torch.Tensor:
         """
         Quantile regression loss with asymmetric Huber kernel.
@@ -442,12 +448,27 @@ class QRDQNAgent(AgentBase):
         ----------
         pred   : Tensor shape (B, N)  — predicted quantiles for taken action
         target : Tensor shape (B, N)  — target quantile distribution
-        taus   : Tensor shape (N,)    — quantile levels τ_i
+        taus   : Tensor shape (N,) or (B, N) — quantile levels τ_i. QR-DQN's
+                 quantile levels are the same fixed grid for every sample in
+                 the batch, so (N,) broadcasts as intended. IQN samples a
+                 fresh τ_i per (sample, quantile-index) — those rows are NOT
+                 interchangeable, so IQN callers MUST pass the real (B, N)
+                 tensor here, not a batch-averaged (N,) vector (averaging
+                 ~256 i.i.d. Uniform(0,1) draws concentrates every column
+                 near 0.5 regardless of what was actually sampled, silently
+                 collapsing IQN's asymmetric weighting to ≈symmetric mean
+                 regression and defeating the tail-risk objective this
+                 asymmetric kernel exists for).
         kappa  : float                — Huber threshold
+        reduce : bool                 — if True (default), return the
+                 batch-mean scalar. If False, return the per-sample loss
+                 of shape (B,) — needed so callers can apply per-sample
+                 PER importance-sampling weights *before* reducing, rather
+                 than weighting an already-reduced scalar (a no-op).
 
         Returns
         -------
-        Tensor scalar — mean quantile regression loss
+        Tensor — scalar if reduce=True, else shape (B,)
         """
         B, N  = pred.shape
         _, Nt = target.shape
@@ -464,14 +485,15 @@ class QRDQNAgent(AgentBase):
             kappa * (td.abs() - 0.5 * kappa),
         )
 
-        # Asymmetric weighting
-        taus_tile = taus.view(1, N, 1)             # (1, N, 1)
+        # Asymmetric weighting. taus is (N,) for QR-DQN's fixed shared grid,
+        # or (B, N) for IQN's per-sample sampled τ — see docstring above.
+        taus_tile = taus.view(1, N, 1) if taus.dim() == 1 else taus.view(B, N, 1)
         indicator = (td.detach() < 0).float()      # (B, N, Nt)
         weights   = (taus_tile - indicator).abs()  # (B, N, Nt)
 
-        # Mean over target quantiles, sum over pred quantiles, mean over batch
-        loss = (weights * huber).mean(dim=2).sum(dim=1).mean()
-        return loss
+        # Mean over target quantiles, sum over pred quantiles -> (B,)
+        per_sample = (weights * huber).mean(dim=2).sum(dim=1)
+        return per_sample.mean() if reduce else per_sample
 
     # ------------------------------------------------------------------
     # Training step
@@ -485,6 +507,8 @@ class QRDQNAgent(AgentBase):
         -------
         float | None — loss if update performed, None if buffer not ready
         """
+        if self._steps < self.warmup_steps:
+            return None
         if not self.buffer.is_ready(self.batch_size):
             return None
 
@@ -527,9 +551,9 @@ class QRDQNAgent(AgentBase):
 
         # ── Quantile regression loss ───────────────────────────────────
         element_loss = self._quantile_huber_loss(
-            Z_sa, Z_tgt, self.taus, self.kappa
+            Z_sa, Z_tgt, self.taus, self.kappa, reduce=False
         )
-        loss = (is_w * element_loss).mean() if is_w.shape == (B,) else element_loss
+        loss = (is_w * element_loss).mean() if is_w.shape == (B,) else element_loss.mean()
 
         # ── Gradient update ───────────────────────────────────────────
         self.optimiser.zero_grad()
@@ -571,6 +595,7 @@ class QRDQNAgent(AgentBase):
             "steps":        self._steps,
             "updates":      self._updates,
             "beta":         self.buffer.beta if self.buffer.prioritized else None,
+            "buffer":       self.buffer.get_state(),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -583,6 +608,7 @@ class QRDQNAgent(AgentBase):
         self._updates = state["updates"]
         if self.buffer.prioritized and state["beta"] is not None:
             self.buffer.beta = state["beta"]
+        self.buffer.set_state(state.get("buffer"))   # .get: absent in pre-fix checkpoints
 
     # ------------------------------------------------------------------
     # Utility

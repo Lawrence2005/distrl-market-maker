@@ -50,6 +50,7 @@ import numpy as np
 import pandas as pd
 
 from evaluation.metrics import load_eval_history, load_train_history
+from evaluation.ablation import _run_tag as _ablation_run_tag
 
 
 # ── Default alpha sweep values ────────────────────────────────────────────────
@@ -66,14 +67,18 @@ def _run_tag(
     seed:    int,
 ) -> str:
     """
-    Build run tag for a CVaR α-sweep run.
-
-    Convention: {agent}_{encoder}_{reward}_{regime}_alpha{alpha}_seed{seed}
-    Matches the naming produced by:
-        python training/train.py agent=qrdqn ... alpha=0.05
+    Delegates to evaluation.ablation's run_tag builder (single source of
+    truth matching training/train.py's convention) — this used to hand-roll
+    its own tag with two independent bugs: (1) `f"{alpha:.2f}".rstrip("0")
+    .rstrip(".")` mangled any alpha whose 2-decimal form ends in "0",
+    e.g. alpha=1.0 -> "alpha1" and alpha=0.10 -> "alpha0.1", instead of
+    train.py's literal "alpha1.00"/"alpha0.10"; (2) it never appended a
+    sampling tag at all, so even a correctly-formatted alpha still 404'd
+    against every qrdqn/iqn checkpoint in this PER-only campaign (all
+    tagged "_per"). Both silently returned None from _load, not an error.
     """
-    alpha_str = f"{alpha:.2f}".rstrip("0").rstrip(".")
-    return f"{agent}_{encoder}_{reward}_{regime}_alpha{alpha_str}_seed{seed}"
+    return _ablation_run_tag(agent, encoder, reward, regime, seed,
+                              alpha=alpha, sampling="per")
 
 
 class EfficientFrontier:
@@ -338,23 +343,29 @@ class EfficientFrontier:
         else:
             details["check2"] = "MAP data not available"
 
-        # Check 3: CVaR should improve (be less negative) as α decreases
-        # relative to mean_pnl — risk-averse agent protects the tail
+        # Check 3: CVaR should improve (be less negative) as α decreases —
+        # risk-averse agent protects the tail. Correlate α directly against
+        # cvar_10, NOT the ratio cvar_10/mean_pnl: this file's own docstring
+        # says mean_pnl is expected to shrink toward zero as α drops (the
+        # risk/return tradeoff being characterized), which is exactly where
+        # a ratio blows up and produces an unstable, often wrong-signed
+        # correlation even when cvar_10 itself is improving monotonically
+        # (verified: cvar_10 -200→-80 as α 1.0→0.05 with mean_pnl 1000→5 —
+        # textbook "CVaR policy works" — gives corr(α,ratio)=+0.55, a FALSE
+        # FAIL, because the ratio only reflects mean_pnl's collapse).
         check3_pass = None
         if "cvar_10" in df.columns and df["cvar_10"].notna().sum() >= 2:
-            # cvar_tail_ratio = cvar_10 / mean_pnl — should increase as α decreases
-            df_clean = df[df["mean_pnl"].abs() > 1e-6].copy()
+            df_clean = df.dropna(subset=["cvar_10"])
             if len(df_clean) >= 2:
-                df_clean["tail_ratio"] = df_clean["cvar_10"] / df_clean["mean_pnl"]
-                corr = df_clean["alpha"].corr(df_clean["tail_ratio"])
-                # Negative corr: lower α → higher tail ratio (better tail relative to mean)
+                corr = df_clean["alpha"].corr(df_clean["cvar_10"])
+                # Negative corr: lower α → higher (less negative) cvar_10
                 check3_pass = corr < -0.2
                 details["check3"] = (
-                    f"Pearson corr(α, CVaR/mean)={corr:.3f} "
+                    f"Pearson corr(α, CVaR_0.10)={corr:.3f} "
                     f"→ {'PASS (tail improves with lower α)' if check3_pass else 'FAIL'}"
                 )
             else:
-                details["check3"] = "Insufficient non-zero mean_pnl runs"
+                details["check3"] = "Insufficient CVaR data"
         else:
             details["check3"] = "CVaR data not available"
 

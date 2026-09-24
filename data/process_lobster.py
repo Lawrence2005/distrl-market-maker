@@ -57,16 +57,15 @@ def process_lobster_directory(
 
         print(f"  Processing {msg_path.name}...")
 
-        # Read files (no header — LOBSTER convention)
-        msg = pd.read_csv(
-            msg_path, header=None,
-            names=["Time", "Type", "OrderID", "Size", "Price", "Direction"]
-        )
+        # Read the orderbook file (no header — LOBSTER convention). The
+        # paired message file only ever supplied ob_path's glob match above
+        # — nothing downstream (snapshot extraction) reads message-level
+        # data, so it was never loaded here (a prior version read it into
+        # `msg` and rescaled its Price column, then discarded the result
+        # without using it anywhere — dead computation, removed).
         ob = pd.read_csv(ob_path, header=None)
 
         # Prices: divide by 10000 to get dollars
-        msg["Price"] = msg["Price"] / 10000.0
-
         price_cols = list(range(0, ob.shape[1], 2))   # columns 0, 2, 4, ... are prices
         ob.iloc[:, price_cols] = ob.iloc[:, price_cols] / 10000.0
 

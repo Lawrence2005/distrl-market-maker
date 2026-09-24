@@ -143,6 +143,37 @@ Source: Sun et al. (2022).
 r_terminal = −κ · |q_T| · σ_T   (κ=1.0)
 ```
 
+**As actually implemented** (`envs/lob_env.py::_compute_reward`, audited and
+corrected for a mark-to-market bug this session — see git history): this
+spec's formulas don't match the code, not a notational variance.
+
+```
+ψ_a = matched_ask · (ask_price − mid)        # ask half-spread capture
+ψ_b = matched_bid · (mid − bid_price)        # bid half-spread capture
+inv_pnl = q_prev · (mid − prev_mid)          # q_prev = inventory BEFORE this
+                                              # step's fills, not after —
+                                              # shares that just transacted
+                                              # are already compensated via
+                                              # ψ_a/ψ_b at their fill price
+PnL = ψ_a + ψ_b + inv_pnl
+
+asymmetric:  r_t = PnL − η · max(0, −inv_pnl)     # penalizes adverse
+                                                   # inventory PnL only, not
+                                                   # |Δq_t| turnover
+quadratic:   r_t = PnL − λ · q_prev²              # a third formulation not
+                                                   # listed above at all
+                                                   # (reward=quadratic)
+sparse:      r_t = +1.0  if both sides filled this step (round-trip)
+                 = −0.5  if a fill crossed the spread (adverse selection),
+                          NOT the |q_t| > 0.8·Q_max condition listed above
+                 =  0.0  otherwise
+```
+
+Reconcile this section with the code (or vice versa) before citing either
+in a write-up — right now they disagree on what "PnL" even means (spread
+capture alone vs. spread capture + mark-to-market) as well as on the exact
+penalty terms for two of the three reward types.
+
 ---
 
 ## 5. Distributional RL and CVaR Policy

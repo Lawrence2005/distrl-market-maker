@@ -5,8 +5,8 @@ Assembles the dashboard's viz_data.json from logs/ and the CSV/JSON outputs
 of scripts/run_analysis.py, run_holdout_eval.py, run_significance_test.py,
 run_stylized_facts.py, and run_ood_transfer.py. Regenerate this any time one
 of those upstream artifacts changes, then rebuild dashboard.html from
-dashboard.template.html + this file (see dashboard build step in the Round 4
-plan / evaluation/results_scaled_down_sweep/README.md).
+dashboard.template.html + this file (see the dashboard build step in
+evaluation/results_scaled_down_sweep/README.md).
 
 Usage:
     python scripts/build_dashboard_data.py [--out PATH]
@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd
 
+from evaluation.ablation import _run_tag as _ablation_run_tag
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR     = PROJECT_ROOT / "logs"
 RESULTS_DIR  = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
@@ -29,11 +31,20 @@ RESULTS_DIR  = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
 REGIMES     = ["low_vol", "normal", "high_vol"]
 RL_AGENTS   = ["sarsa", "dqn", "ppo", "qrdqn", "iqn"]
 BASELINES   = ["fixedspread", "as", "glft"]
-ALPHA_TAG   = {"qrdqn": "_alpha0.25", "iqn": "_alpha0.25"}
 
 
 def _run_tag(agent: str, regime: str) -> str:
-    return f"{agent}_handcrafted_asymmetric_{regime}{ALPHA_TAG.get(agent, '')}_seed42"
+    # Delegates to evaluation.ablation's run_tag builder (the single source
+    # of truth matching training/train.py's convention) rather than
+    # reimplementing it — this file used to hand-build the tag without the
+    # alpha_tag or sampling_tag, which silently dropped every dqn/qrdqn/iqn
+    # run from the dashboard the moment either tag was introduced.
+    # sampling="per" explicitly: this campaign trained dqn/qrdqn/iqn with
+    # prioritized_replay=true only, so the "_uniform" tag _ablation_run_tag
+    # defaults to points at checkpoint/log dirs that don't exist (same bug
+    # just found and fixed in scripts/run_analysis.py::_run_tag).
+    return _ablation_run_tag(agent, "handcrafted", "asymmetric", regime, 42,
+                              sampling="per")
 
 
 def _baseline_tag(agent: str, regime: str) -> str:

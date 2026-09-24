@@ -1,12 +1,12 @@
 """
 scripts/run_holdout_eval.py
 
-Held-out test-set evaluation for Round 3: every RL agent's best checkpoint
+Held-out test-set evaluation: every RL agent's best checkpoint
 and every baseline, run on the SAME fixed block of episode seeds that
 neither training, checkpoint selection, nor any prior evaluation has ever
 touched.
 
-Why this exists (see the Round 3 dashboard's methodology discussion):
+Why this exists (see the dashboard's methodology discussion):
 
 1. RL eval rollouts always used the same 3 fixed seeds
    (`seed+10000+{0,1,2}`) at every checkpoint throughout training — so
@@ -23,8 +23,10 @@ Why this exists (see the Round 3 dashboard's methodology discussion):
 
 This script fixes both: one holdout seed block, far outside every range
 used above (training: seed+1..seed+n_episodes; RL eval: seed+10000+0..2;
-AS-recovery: base seed 500), applied identically to all 8 models per
-regime — a paired comparison on genuinely unseen data.
+AS-recovery: base seed 95000 — was 500 until this was audited and found to
+overlap training episodes 458-472 for any n_episodes=500 run), applied
+identically to all 8 models per regime — a paired comparison on genuinely
+unseen data.
 
 Usage:
     python scripts/run_holdout_eval.py --n_episodes 15

@@ -73,10 +73,40 @@ def _run_tag(
     regime:    str,
     seed:      int,
     recurrent: bool = False,
+    alpha:     float | None = 0.25,
+    sampling:  str | None = "per",
 ) -> str:
-    """Build the run directory name matching train.py's run_tag convention."""
-    variant = "_recurrent" if recurrent else ""
-    return f"{agent}_{encoder}_{reward}_{regime}{variant}_seed{seed}"
+    """
+    Build the run directory name matching training/train.py's run_tag
+    convention EXACTLY — that file is the single source of truth for this
+    format (alpha_tag and sampling_tag order, .2f formatting), so if it
+    changes there, mirror the change here too rather than drifting (this
+    function previously omitted both tags entirely, which silently nulled
+    every qrdqn/iqn lookup through this class since alpha_tag is mandatory
+    for those two agents — always verify against an actual logs/ directory
+    listing when in doubt).
+
+    alpha    : only applied for qrdqn/iqn (train.py never adds it for
+               dqn/ppo/sarsa) — pass None to omit even for qrdqn/iqn.
+    sampling : "uniform" or "per", only applied for dqn/qrdqn/iqn — pass
+               None to omit. Defaults to "per": the full-corpus retrain
+               campaign this class now targets trained every dqn/qrdqn/iqn
+               run (sarsa+handcrafted matrix, and qrdqn's cnn/autoencoder/
+               recurrent encoder-ablation slice) with prioritized_replay=
+               true only — no "_uniform" variant was ever trained, so that
+               used to be the stale default here (same bug independently
+               found and fixed this session in scripts/run_analysis.py,
+               scripts/build_dashboard_data.py, and
+               scripts/run_cvar_sweep_eval.py — this is the actual root
+               definition all of those delegate to, so every one of this
+               class's own 8 internal _run_tag(...) call sites, plus
+               evaluation/visualize.py's, inherited the same silent-404
+               bug through this default alone).
+    """
+    variant_tag  = "_recurrent" if recurrent else ""
+    alpha_tag    = f"_alpha{alpha:.2f}" if (alpha is not None and agent in ("qrdqn", "iqn")) else ""
+    sampling_tag = f"_{sampling}" if (sampling is not None and agent in ("dqn", "qrdqn", "iqn")) else ""
+    return f"{agent}_{encoder}_{reward}_{regime}{variant_tag}{alpha_tag}{sampling_tag}_seed{seed}"
 
 
 class AblationAnalysis:
