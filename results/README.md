@@ -439,6 +439,6 @@ place rather than re-published as a new link — ask in a Claude Code session wi
 access to this project's conversation history for the current URL. To regenerate
 `dashboard.html` after new results land, rebuild `viz_data.json` via
 `scripts/build_dashboard_data.py` (assembles it from
-`evaluation/results_scaled_down_sweep/*.csv`, `stylized_facts.json`, and
+`results/*.csv`, `stylized_facts.json`, and
 `logs/*/train_history.json` / `eval_history.json`), splice it into the dashboard HTML
 template, and save the result back over `dashboard.html`.
