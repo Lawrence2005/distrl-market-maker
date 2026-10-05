@@ -60,3 +60,4 @@ wandb/
 # Secrets
 .env
 *.key
+dashboard.html
