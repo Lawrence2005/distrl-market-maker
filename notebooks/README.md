@@ -2,9 +2,9 @@
 
 | Notebook | Week | Purpose |
 |---|---|---|
-| 05_convergence_check.ipynb    | 6 | Training curves, sanity checks — reads `logs/` dynamically, current |
-| 07_ablation_analysis.ipynb    | 8 | Encoder x agent ablation table — real implementation, waiting on the full 17-variant ablation (not yet run) |
-| 08_efficient_frontier.ipynb   | 9 | CVaR alpha sweep, frontier plot — real implementation, waiting on an alpha sweep (not yet run) |
+| convergence_check.ipynb    | 6 | Training curves, sanity checks — reads `logs/` dynamically, current |
+| ablation_analysis.ipynb    | 8 | Encoder x agent ablation table — real implementation, waiting on the full 17-variant ablation (not yet run) |
+| efficient_frontier.ipynb   | 9 | CVaR alpha sweep, frontier plot — real implementation, waiting on an alpha sweep (not yet run) |
 
 `01_literature_review.ipynb`, `02_env_calibration.ipynb`, `03_stylized_facts.ipynb`, and
 `10_final_figures.ipynb` were planned here but never created — remove from this table if

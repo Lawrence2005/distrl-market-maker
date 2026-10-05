@@ -407,7 +407,7 @@ class Visualizer:
 
         if save:
             return self._save(fig, f"ablation_{metric}_{regime}.png",
-                              "w07_ablation")
+                              "ablation")
         return fig
 
     # ------------------------------------------------------------------
@@ -565,7 +565,7 @@ class Visualizer:
         _legend(ax)
 
         if save:
-            return self._save(fig, "latent_space_pca.png", "w07_ablation")
+            return self._save(fig, "latent_space_pca.png", "ablation")
         return fig
 
     # ------------------------------------------------------------------
