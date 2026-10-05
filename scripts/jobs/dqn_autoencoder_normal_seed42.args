@@ -1,0 +1,13 @@
+/home/lawre/distrl-logs/dqn_autoencoder_normal_seed42.out
+agent=dqn
+encoder=autoencoder
+reward=asymmetric
+env.regime=normal
+env.use_abides=true
+training.n_episodes=500
+training.train_every_n_steps=4
+training.checkpoint_every=25
+training.eval_every=25
+training.eval_episodes=3
+seed=42
+training.early_stopping=true

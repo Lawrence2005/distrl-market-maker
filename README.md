@@ -71,17 +71,37 @@ low_vol/normal/high_vol regimes, 15-episode held-out evaluation:
   −1.16, high_vol +1.79 vs. −2.18). DQN beats GLFT in normal/high_vol but is
   significantly worse than GLFT in low_vol, the one regime a classical baseline
   still wins outright.
-- **Hand-engineered features beat every learned encoder tried** (CNN, autoencoder,
-  LSTM-recurrent) by a wide, statistically significant margin (all p<0.0001) —
-  none of the representation-learning alternatives closed the gap at this
-  project's training budget.
+- **Hand-engineered features beat every learned encoder tried for QR-DQN**
+  (CNN, autoencoder, LSTM-recurrent) by a wide, statistically significant
+  margin (all p<0.0001). Extending the same CNN/autoencoder ablation to
+  DQN, PPO, and IQN (completing the full 17-variant architecture grid) shows
+  this does **not** generalize uniformly: it replicates strongly for DQN
+  (both encoders significantly worse, p<0.0001) but not for PPO or IQN
+  (no significant difference either way) — not because their learned
+  encoders perform better, but because PPO's and IQN's own handcrafted
+  baselines are themselves weak in this regime, leaving too small a gap to
+  be statistically distinguishable. No learned encoder ever significantly
+  *beats* handcrafted for any of the 5 agents tested.
+- **Recurrent integration (Q4) never significantly helps and does not consistently
+  compound with CVaR.** Across 10 snapshot-vs-recurrent pairs (QR-DQN in all 3
+  regimes, DQN/IQN/PPO in `normal`, plus QR-DQN/`normal` across the CVaR alpha
+  sweep), the only 2 significant results both favor the snapshot policy
+  (QR-DQN and DQN, both `normal`, p<0.0001); the CVaR-alpha extension finds the
+  effect is alpha-dependent, not a stable interaction — recurrent significantly
+  *wins* at α=0.50 but significantly *loses* at α=0.10, reversing what
+  training-time eval numbers alone had suggested for that α. See the results doc's
+  "Recurrent vs. snapshot" section for the full table.
 - **QR-DQN is the most robust out-of-distribution generalizer**: the only agent
   that stays profitable when a checkpoint trained in one regime is dropped into
-  another without fine-tuning, across all 3 transfer scenarios tested.
+  another without fine-tuning, across **all 6 of 6** directed regime-transfer
+  pairs tested — and in the 3 pairs that transfer *out of* high_vol, it doesn't
+  just hold up, it improves on its own in-distribution Sharpe.
 - The CVaR alpha sweep does **not** trace the textbook risk-return efficient
-  frontier at this sample size (single seed per α) — see the results doc for the
-  non-monotonic detail and why more seeds would be needed to separate signal from
-  noise.
+  frontier at this training budget — confirmed with a genuine 4-seed replication
+  (not just the original single seed per α): the single-seed version's apparent
+  non-monotonic pattern didn't survive real seed variance, and most α values turn
+  out to be statistically indistinguishable from each other. See the results doc
+  for the full multi-seed table.
 - The live ABIDES-Gym simulator passes 4–5 of 5 stylized-facts checks in every
   regime under a random policy, but was calibrated against synthetic order flow,
   never real LOBSTER data (see "Future Work").

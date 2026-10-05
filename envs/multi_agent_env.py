@@ -186,6 +186,15 @@ class MultiAgentMarketEnv:
         self._lob_history    = deque(maxlen=_LOB_HISTORY_MAXLEN)
 
         if self._abides is not None:
+            # Same real-ABIDES seeding fix as LOBMarketMakingEnv.reset()
+            # (envs/lob_env.py): SubGymMarketsExecutionEnv_v0.reset() draws
+            # its background-agent-population seed from self.np_random,
+            # which otherwise self-seeds from OS entropy — never actually
+            # controlled by the `seed` argument this method receives. Set
+            # it explicitly before resetting so episodes are reproducible
+            # and genuinely paired across separate runs of this env.
+            if seed is not None:
+                self._abides.np_random = np.random.default_rng(seed)
             # .reset() returns the gym obs array, not the raw_state dict —
             # pull the actual raw_state off gym_agent, same as
             # LOBMarketMakingEnv.reset() (envs/lob_env.py) does.

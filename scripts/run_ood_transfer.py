@@ -6,10 +6,19 @@ checkpoint (no new training) inside a DIFFERENT regime's environment than it
 was trained in, to measure out-of-distribution performance degradation under
 a regime shift the agent never saw during training.
 
-Scenarios (train_regime -> test_regime):
-    low_vol -> high_vol
+All 6 directed regime pairs (every ordered pair among low_vol/normal/high_vol):
+    low_vol -> high_vol   (original 3)
     normal  -> low_vol
     normal  -> high_vol
+    low_vol -> normal     (added later — completes the 3x2 directed-pair grid)
+    high_vol -> normal
+    high_vol -> low_vol
+
+Only ADDED_SCENARIOS actually get rolled out when this runs now — the
+original 3 already have saved, correct (seed=42, deterministic) results in
+ood_transfer_episodes.csv, so re-running them would just burn real-ABIDES
+wall time to reproduce identical numbers. main() merges the new rollouts
+with the existing ones rather than recomputing from scratch.
 
 Uses a fresh, disjoint holdout seed block (`seed+90000+i`) — every other
 range is already spoken for: training (seed+1..seed+n_episodes), RL eval
@@ -52,11 +61,17 @@ OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
 BASE_SEED  = 42
 OOD_OFFSET = 90000  # disjoint from training/eval/AS-recovery/holdout (80000) blocks
 
-TRANSFER_SCENARIOS = [
+ORIGINAL_SCENARIOS = [
     ("low_vol", "high_vol"),
     ("normal", "low_vol"),
     ("normal", "high_vol"),
 ]
+ADDED_SCENARIOS = [
+    ("low_vol", "normal"),
+    ("high_vol", "normal"),
+    ("high_vol", "low_vol"),
+]
+TRANSFER_SCENARIOS = ORIGINAL_SCENARIOS + ADDED_SCENARIOS
 
 
 def run_scenario(train_regime: str, test_regime: str, ood_seeds: list[int]) -> pd.DataFrame:
@@ -93,14 +108,45 @@ def main() -> None:
     print(f"OOD holdout seed block: {ood_seeds[0]}..{ood_seeds[-1]} "
           f"({args.n_episodes} episodes, disjoint from every other seed range)")
 
-    ood_df = pd.concat(
-        [run_scenario(train_regime, test_regime, ood_seeds)
-         for train_regime, test_regime in TRANSFER_SCENARIOS],
-        ignore_index=True,
-    )
-
+    # Per-scenario checkpointing: each finished scenario's rollout is saved to
+    # its own partial file immediately, and a scenario whose partial file
+    # already exists is loaded from disk instead of re-run. Without this, an
+    # interruption anywhere in this ~2h run (this project has already lost a
+    # whole training job to what looked like a laptop sleep but was actually
+    # a full WSL2 VM restart — see research_gap_closing_plan.md) would lose
+    # ALL scenarios completed so far, not just the one in flight, since the
+    # original version only wrote output once at the very end.
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ood_df.to_csv(OUT_DIR / "ood_transfer_episodes.csv", index=False)
+    partial_dir = OUT_DIR / "_ood_transfer_partial"
+    partial_dir.mkdir(exist_ok=True)
+
+    new_frames = []
+    for train_regime, test_regime in ADDED_SCENARIOS:
+        partial_path = partial_dir / f"{train_regime}_to_{test_regime}.csv"
+        if partial_path.exists():
+            print(f"\n--- Scenario: {train_regime} -> {test_regime} --- "
+                  f"[already done, loading from {partial_path.name}]")
+            new_frames.append(pd.read_csv(partial_path))
+            continue
+        scenario_df = run_scenario(train_regime, test_regime, ood_seeds)
+        scenario_df.to_csv(partial_path, index=False)
+        new_frames.append(scenario_df)
+    new_df = pd.concat(new_frames, ignore_index=True)
+
+    existing_path = OUT_DIR / "ood_transfer_episodes.csv"
+    if existing_path.exists():
+        existing_df = pd.read_csv(existing_path)
+        ood_df = pd.concat([existing_df, new_df], ignore_index=True)
+    else:
+        ood_df = new_df
+
+    ood_df.to_csv(existing_path, index=False)
+    # All 3 added scenarios are now folded into the canonical file — the
+    # per-scenario partials have served their purpose (resume safety net)
+    # and would otherwise sit around as stale duplicate data.
+    for f in partial_dir.glob("*.csv"):
+        f.unlink()
+    partial_dir.rmdir()
 
     ood_summary = (
         ood_df.groupby(["train_regime", "test_regime", "model"])["sharpe"]

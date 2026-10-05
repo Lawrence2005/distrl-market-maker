@@ -1,0 +1,15 @@
+/home/lawre/distrl-logs/qrdqn_recurrent_normal_alpha0.10_seed42.out
+agent=qrdqn
+encoder=handcrafted
+variant=recurrent
+reward=asymmetric
+env.regime=normal
+env.use_abides=true
+training.n_episodes=500
+training.train_every_n_steps=4
+training.checkpoint_every=25
+training.eval_every=25
+training.eval_episodes=3
+alpha=0.10
+seed=42
+training.early_stopping=true

@@ -1,16 +1,16 @@
 """
 scripts/run_encoder_ablation_eval.py
 
-Encoder ablation evaluation. QR-DQN was trained with
-3 additional encoders (cnn, autoencoder, recurrent-handcrafted) at alpha=0.25,
-normal regime, alongside the existing handcrafted-snapshot result already
-on the dashboard. This script evaluates all 3 additional encoders on the SAME
-held-out seed block scripts/run_holdout_eval.py uses (seed+80000+i), runs
-AS-recovery for each, and runs a paired significance test against the
-EXISTING handcrafted-QRDQN-normal-alpha0.25 held-out episodes (already in
-holdout_eval.csv, same 15 seeds) — not against GLFT, since the research
-question here is "does a different state representation change QR-DQN's
-policy," not "does it beat the analytical baseline."
+Encoder ablation evaluation. QR-DQN was trained with 2 additional SNAPSHOT
+encoders (cnn, autoencoder) at alpha=0.25, normal regime, alongside the
+existing handcrafted-snapshot result already on the dashboard. This script
+evaluates both on the SAME held-out seed block scripts/run_holdout_eval.py
+uses (seed+80000+i), runs AS-recovery for each, and runs a paired
+significance test against the EXISTING handcrafted-QRDQN-normal-alpha0.25
+held-out episodes (already in holdout_eval.csv, same 15 seeds) — not against
+GLFT, since the research question here is "does a different state
+representation change QR-DQN's policy," not "does it beat the analytical
+baseline."
 
 Usage:
     python scripts/run_encoder_ablation_eval.py --n_episodes 15
@@ -70,12 +70,8 @@ ENCODERS = {
         load_kwargs=dict(hidden_dim=256, n_quantiles=32, latent_dim=8,
                           ae_checkpoint=str(PROJECT_ROOT / "checkpoints" / "ae_encoder_8.pt")),
     ),
-    "recurrent": dict(
-        # _per, not _uniform: fresh checkpoint from the current retrain.
-        run_tag="qrdqn_handcrafted_asymmetric_normal_recurrent_alpha0.25_per_seed42",
-        encoder_type="handcrafted",
-        load_kwargs=dict(hidden_dim=256, n_quantiles=32, use_lstm=True),
-    ),
+    # "recurrent" used to live here — moved to scripts/run_recurrent_variant_eval.py
+    # (see this file's module docstring for why).
 }
 
 

@@ -1,0 +1,3 @@
+encoder,mean_diff_vs_handcrafted,t_p,wilcoxon_p,significantly_different_p05
+cnn,-3.747680708229672,7.249824451409786e-08,6.103515625e-05,True
+autoencoder,-4.373466882678368,9.784360588614789e-08,6.103515625e-05,True

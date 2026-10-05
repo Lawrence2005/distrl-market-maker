@@ -1,0 +1,62 @@
+{
+  "low_vol": {
+    "overall_pass": true,
+    "facts": {
+      "fat_tails": {
+        "passed": true
+      },
+      "volatility_clustering": {
+        "passed": true
+      },
+      "spread_autocorr": {
+        "passed": false
+      },
+      "price_impact": {
+        "passed": true
+      },
+      "queue_imbalance": {
+        "passed": true
+      }
+    }
+  },
+  "normal": {
+    "overall_pass": true,
+    "facts": {
+      "fat_tails": {
+        "passed": true
+      },
+      "volatility_clustering": {
+        "passed": true
+      },
+      "spread_autocorr": {
+        "passed": true
+      },
+      "price_impact": {
+        "passed": true
+      },
+      "queue_imbalance": {
+        "passed": true
+      }
+    }
+  },
+  "high_vol": {
+    "overall_pass": true,
+    "facts": {
+      "fat_tails": {
+        "passed": true
+      },
+      "volatility_clustering": {
+        "passed": true
+      },
+      "spread_autocorr": {
+        "passed": true
+      },
+      "price_impact": {
+        "passed": true
+      },
+      "queue_imbalance": {
+        "passed": true
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+/home/lawre/distrl-logs/qrdqn_normal_alpha1.0_seed1042.out
+agent=qrdqn
+encoder=handcrafted
+reward=asymmetric
+env.regime=normal
+env.use_abides=true
+training.n_episodes=500
+training.train_every_n_steps=4
+training.checkpoint_every=25
+training.eval_every=25
+training.eval_episodes=3
+alpha=1.0
+seed=1042
+training.early_stopping=true

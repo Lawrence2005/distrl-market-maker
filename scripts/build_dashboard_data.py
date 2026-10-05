@@ -140,6 +140,33 @@ def build() -> dict:
         "cvar_efficient_frontier": csv_records(RESULTS_DIR / "cvar_efficient_frontier.csv"),
         "encoder_ablation_summary": csv_records(RESULTS_DIR / "encoder_ablation_summary.csv"),
         "encoder_ablation_significance": csv_records(RESULTS_DIR / "encoder_ablation_significance.csv"),
+        # Recurrent-vs-snapshot is its own comparison axis (an LSTM backbone
+        # swap, not an encoder swap — see CLAUDE.md's architecture note), so
+        # it gets its own dashboard section rather than living inside
+        # encoder_ablation_*; the encoder ablation's own "recurrent" row was
+        # removed from its CSVs for the same reason (it also predated the
+        # DRQN replay-buffer episode-boundary bugfix — see
+        # recurrent_variant_significance.csv's post-fix numbers instead).
+        "recurrent_variant_holdout": csv_records(RESULTS_DIR / "recurrent_variant_holdout.csv"),
+        "recurrent_variant_significance": csv_records(RESULTS_DIR / "recurrent_variant_significance.csv"),
+        "recurrent_variant_as_recovery": csv_records(RESULTS_DIR / "recurrent_variant_as_recovery.csv"),
+        # Non-recurrent AS-recovery baseline for the recurrent x CVaR-alpha
+        # interaction variants (qrdqn_normal_alpha{0.05,0.10,0.50,1.00}) —
+        # as_recovery.csv above only has the main campaign's default alpha=0.25
+        # row per agent/regime, so the alpha-specific baseline comes from here
+        # instead (unaffected by the holdout-seed bug fixed in
+        # scripts/run_cvar_sweep_eval.py, since AS-recovery uses its own fixed
+        # seed block, not the holdout one).
+        "cvar_sweep_as_recovery": csv_records(RESULTS_DIR / "cvar_sweep_as_recovery.csv"),
+        # Completes the 17-variant grid: DQN/PPO/IQN each x {cnn, autoencoder}
+        # (QR-DQN's row was already in encoder_ablation_* above). Separate
+        # file set, not merged into encoder_ablation_* — that file's schema
+        # has no agent column and its dashboard section is already published
+        # as QR-DQN-specific; this stays a parallel section instead.
+        "encoder_ablation_multiagent_holdout": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_holdout.csv"),
+        "encoder_ablation_multiagent_as_recovery": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_as_recovery.csv"),
+        "encoder_ablation_multiagent_significance": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_significance.csv"),
+        "encoder_ablation_multiagent_summary": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_summary.csv"),
     }
     stylized_path = RESULTS_DIR / "stylized_facts.json"
     data["stylized_facts"] = load_json(stylized_path) if stylized_path.exists() else {}

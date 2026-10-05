@@ -35,6 +35,23 @@ same sum-tree stratified scheme as `sample()`/`_sample_per()`, with
 matching importance-sampling weights — the priority attaches to the
 transition the TD update actually uses.
 
+A sampled window is REJECTED and resampled if any `done=True` falls at any
+position except the last (i.e. if it would splice the tail of one episode
+onto the head of a different, unrelated one under a single continuous LSTM
+hidden state). No agent's train_step() resets hidden state mid-window — they
+all do a single reset_hidden() + forward() over the whole seq_len window
+(confirmed by reading dqn.py/qrdqn.py/iqn.py's train_step, which only ever
+reads dones[:, -1] for the Bellman terminal mask, never the intermediate
+positions) — so a cross-episode window would silently feed the network
+nonsense "history" blending two independently-seeded, unrelated market
+realizations. This buffer used to allow such windows and document that "the
+training loop" handles the reset — it never did; found via user-prompted
+investigation into why recurrent variants underperform (see
+evaluation/results_scaled_down_sweep/README.md). Matches the "Random
+Updates" DRQN training regime from Hausknecht & Stone (2015, cited below) —
+one of the two training regimes their paper studies, neither of which lets
+a window span two independent episodes.
+
 For non-recurrent ablations, use `sample()` for i.i.d. transition sampling.
 
 PER parameters
@@ -294,9 +311,12 @@ class ReplayBuffer:
         """
         Sample a batch of contiguous sequences for DRQN training.
 
-        Each sequence has length seq_len. Sequences that cross episode
-        boundaries are valid — the LSTM hidden state is reset at episode
-        boundaries by the training loop using the `done` flags.
+        Each sequence has length seq_len and is entirely from ONE episode —
+        a candidate window is rejected and resampled if any `done=True`
+        falls before its last position (see module docstring for why: no
+        agent's train_step actually resets hidden state mid-window, so a
+        cross-episode window would corrupt the LSTM's hidden state with two
+        unrelated market realizations spliced together).
 
         Parameters
         ----------
@@ -326,19 +346,29 @@ class ReplayBuffer:
         self,
         batch_size: int,
     ) -> tuple[dict, np.ndarray, np.ndarray]:
-        """Uniform start-index sequence sampling."""
+        """Uniform start-index sequence sampling, rejecting cross-episode windows."""
         n       = len(self)
-        starts  = np.random.randint(0, n - self.seq_len + 1, size=batch_size)
-        indices = starts
+        starts  = np.zeros(batch_size, dtype=np.int64)
+        seqs    = []
 
-        seqs = []
-        for start in starts:
-            seq = [self._get(start + t) for t in range(self.seq_len)]
+        for i in range(batch_size):
+            while True:
+                start = int(np.random.randint(0, n - self.seq_len + 1))
+                seq   = [self._get(start + t) for t in range(self.seq_len)]
+                if not self._crosses_episode_boundary(seq):
+                    break
+            starts[i] = start
             seqs.append(seq)
 
+        indices = starts
         batch   = self._collate_sequences(seqs)
         weights = np.ones(batch_size, dtype=np.float32)
         return batch, indices, weights
+
+    @staticmethod
+    def _crosses_episode_boundary(seq: list[Transition]) -> bool:
+        """True if any transition before the last one ends an episode."""
+        return any(t.done for t in seq[:-1])
 
     def _sample_sequences_per(
         self,
@@ -366,16 +396,26 @@ class ReplayBuffer:
             s  = np.random.uniform(lo, hi)
             idx, priority, transition = self._tree.get(s)
             end = idx - self._tree.capacity
-            # Retry (full-range resample, same fallback as _sample_per)
-            # on an unwritten slot or a position with no full seq_len
-            # window of history behind it.
-            while transition is None or end < self.seq_len - 1:
+            # Retry (full-range resample, same fallback as _sample_per) on an
+            # unwritten slot, a position with no full seq_len window of
+            # history behind it, or a window that crosses an episode
+            # boundary (see module docstring — the priority still attaches
+            # to a genuinely different transition each retry, so this
+            # doesn't bias which END position ultimately gets used, only
+            # rules out ends whose full window isn't a single episode).
+            while True:
+                while transition is None or end < self.seq_len - 1:
+                    s = np.random.uniform(0, self._tree.total)
+                    idx, priority, transition = self._tree.get(s)
+                    end = idx - self._tree.capacity
+                start = end - self.seq_len + 1
+                seq   = [self._get(start + t) for t in range(self.seq_len)]
+                if not self._crosses_episode_boundary(seq):
+                    break
                 s = np.random.uniform(0, self._tree.total)
                 idx, priority, transition = self._tree.get(s)
                 end = idx - self._tree.capacity
 
-            start = end - self.seq_len + 1
-            seq   = [self._get(start + t) for t in range(self.seq_len)]
             seqs.append(seq)
             indices[i]    = idx
             priorities[i] = priority

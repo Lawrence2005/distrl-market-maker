@@ -317,6 +317,28 @@ class TestSequenceSampling:
         assert batch["done"].max() == 1.0, \
             "At least one done=True should appear across 32 sampled sequences"
 
+    @pytest.mark.parametrize("prioritized", [False, True])
+    def test_sequence_never_crosses_episode_boundary(self, prioritized):
+        """
+        No sampled sequence may contain done=True except at its last
+        position — a mid-sequence done means the window spliced together
+        two unrelated episodes under one continuous (never mid-window-reset)
+        LSTM hidden state, which no agent's train_step() guards against.
+        Short episodes (done every 5 steps, well under SEQ_LEN=10) force
+        most naive windows to cross a boundary, so this fails hard pre-fix.
+        """
+        buf = ReplayBuffer(capacity=500, prioritized=prioritized,
+                            seq_len=SEQ_LEN, seed=0)
+        for i in range(300):
+            done = (i % 5 == 4)   # episode ends every 5 steps
+            buf.push(_obs(), 0, 0.0, _obs(), done)
+        for _ in range(20):
+            batch, _, _ = buf.sample_sequences(16)
+            interior_done = batch["done"][:, :-1]
+            assert interior_done.max() == 0.0, \
+                "A sampled sequence contained done=True before its last " \
+                "position — it crosses an episode boundary"
+
     def test_sequence_raises_if_not_enough_data(self):
         buf = ReplayBuffer(capacity=100, prioritized=False,
                            seq_len=10, seed=0)
