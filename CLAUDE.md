@@ -57,7 +57,7 @@ Training config is Hydra-based (`training/configs/config.yaml`), composed from g
 
 ## Architecture
 
-**Data/control flow:** `envs/` (simulator) → `encoders/` (state representation) → `agents/` (policy/value learning, optionally wrapped by `agents/cvar_policy.py`) → `training/train.py` (drives episodes, writing to `logs/<run_tag>/` and `checkpoints/<run_tag>/`) → `evaluation/` (metrics, ablations, plots) consumed by `evaluation/results_scaled_down_sweep/` (CSVs/JSON) and the published dashboard.
+**Data/control flow:** `envs/` (simulator) → `encoders/` (state representation) → `agents/` (policy/value learning, optionally wrapped by `agents/cvar_policy.py`) → `training/train.py` (drives episodes, writing to `logs/<run_tag>/` and `checkpoints/<run_tag>/`) → `evaluation/` (metrics, ablations, plots) consumed by `results/` (CSVs/JSON) and the published dashboard.
 
 - **`envs/`** — ABIDES-Gym extensions. `lob_env.py` is the base `LOBMarketMakingEnv` (MultiDiscrete bid/ask tick-offset action space, three reward formulations: asymmetric-η / quadratic-λ / sparse). Background agent population comes from ABIDES's own `rmsc04` config, unmodified. `multi_agent_env.py` runs N simultaneous MM agents. `stylized_facts.py` validates simulator realism post-episode.
 

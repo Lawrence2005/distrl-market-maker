@@ -6,7 +6,7 @@ of scripts/run_analysis.py, run_holdout_eval.py, run_significance_test.py,
 run_stylized_facts.py, and run_ood_transfer.py. Regenerate this any time one
 of those upstream artifacts changes, then rebuild dashboard.html from
 dashboard.template.html + this file (see the dashboard build step in
-evaluation/results_scaled_down_sweep/README.md).
+results/README.md).
 
 Usage:
     python scripts/build_dashboard_data.py [--out PATH]
@@ -26,7 +26,7 @@ from evaluation.ablation import _run_tag as _ablation_run_tag
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR     = PROJECT_ROOT / "logs"
-RESULTS_DIR  = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+RESULTS_DIR  = PROJECT_ROOT / "results"
 
 REGIMES     = ["low_vol", "normal", "high_vol"]
 RL_AGENTS   = ["sarsa", "dqn", "ppo", "qrdqn", "iqn"]

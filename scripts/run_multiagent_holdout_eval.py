@@ -50,7 +50,7 @@ from scripts.run_multiagent_tournament import (
 )
 
 PROJECT_ROOT   = Path(__file__).resolve().parents[1]
-OUT_DIR        = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR        = PROJECT_ROOT / "results"
 HOLDOUT_OFFSET = 80000  # matches scripts/run_holdout_eval.py's convention
 
 

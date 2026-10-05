@@ -47,7 +47,7 @@ nonsense "history" blending two independently-seeded, unrelated market
 realizations. This buffer used to allow such windows and document that "the
 training loop" handles the reset — it never did; found via user-prompted
 investigation into why recurrent variants underperform (see
-evaluation/results_scaled_down_sweep/README.md). Matches the "Random
+results/README.md). Matches the "Random
 Updates" DRQN training regime from Hausknecht & Stone (2015, cited below) —
 one of the two training regimes their paper studies, neither of which lets
 a window span two independent episodes.

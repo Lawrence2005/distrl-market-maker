@@ -216,7 +216,7 @@ if __name__ == "__main__":
     )
     comparison_df  = run_model_comparison()
 
-    out_dir = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+    out_dir = PROJECT_ROOT / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
     as_recovery_df.to_csv(out_dir / "as_recovery.csv", index=False)
     comparison_df.to_csv(out_dir / "model_comparison.csv", index=False)

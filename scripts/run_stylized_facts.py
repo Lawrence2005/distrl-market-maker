@@ -22,7 +22,7 @@ from envs.stylized_facts import run_stylized_facts_audit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR   = PROJECT_ROOT / "training" / "configs"
-OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR      = PROJECT_ROOT / "results"
 
 
 def build_regime_env(regime: str, seed: int):

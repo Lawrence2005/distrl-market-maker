@@ -15,9 +15,6 @@ itself rather than a trained agent.
 
 ## Week 8–9 deliverable
 
-`results_scaled_down_sweep/` holds the current model-comparison results — a
-scaled-down local sweep (5 agents x {low_vol, normal}, handcrafted encoder only,
-seed=42), not the full 17-variant encoder/recurrent ablation the top-level
-`README.md` describes for Week 8. See `results_scaled_down_sweep/README.md` for
-scope, key findings, and two SARSA bugs found and fixed while producing these
-results.
+`../results/` holds the current model-comparison results — a scaled-down local
+sweep (5 agents x 3 regimes, plus encoder/recurrent ablations, seed=42 unless
+noted). See `../results/README.md` for scope and key findings.

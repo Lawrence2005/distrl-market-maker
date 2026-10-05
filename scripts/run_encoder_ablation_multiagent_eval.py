@@ -43,7 +43,7 @@ from scripts.run_analysis import AGENT_CKPT_KWARGS, _MIN_EPISODES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR   = PROJECT_ROOT / "training" / "configs"
-OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR      = PROJECT_ROOT / "results"
 
 BASE_SEED         = 42
 HOLDOUT_OFFSET    = 80000  # matches scripts/run_holdout_eval.py

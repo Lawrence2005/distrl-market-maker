@@ -8,8 +8,8 @@ valid paired sample (paired t-test + Wilcoxon signed-rank, both computed;
 Wilcoxon as the primary call since Sharpe differences aren't guaranteed
 normal, t-test reported alongside for reference).
 
-Reads:  evaluation/results_scaled_down_sweep/holdout_eval.csv
-Writes: evaluation/results_scaled_down_sweep/significance_vs_glft.csv
+Reads:  results/holdout_eval.csv
+Writes: results/significance_vs_glft.csv
 
 Usage:
     python scripts/run_significance_test.py
@@ -25,7 +25,7 @@ import pandas as pd
 from scipy.stats import ttest_rel, wilcoxon
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR      = PROJECT_ROOT / "results"
 
 RL_AGENTS = ["sarsa", "dqn", "ppo", "qrdqn", "iqn"]
 

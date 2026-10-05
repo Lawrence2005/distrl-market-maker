@@ -31,7 +31,7 @@ comparison apples-to-apples rather than needing disjoint seeds per scenario.
 
 Reports, per (agent, scenario):
     in_dist  — held-out Sharpe in the TRAINING regime (from
-               evaluation/results_scaled_down_sweep/holdout_summary.csv)
+               results/holdout_summary.csv)
     ood      — held-out Sharpe of the SAME checkpoint, rolled out in the
                TEST regime
     degradation_pct — (in_dist - ood) / (|in_dist| + eps), matching
@@ -56,7 +56,7 @@ from training.rollout import run_episode as rl_run_episode
 from scripts.run_analysis import AGENT_CKPT_KWARGS, best_checkpoints, build_regime_env
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR      = PROJECT_ROOT / "results"
 
 BASE_SEED  = 42
 OOD_OFFSET = 90000  # disjoint from training/eval/AS-recovery/holdout (80000) blocks

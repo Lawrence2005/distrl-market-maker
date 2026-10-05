@@ -52,7 +52,7 @@ from scripts.run_baseline import build_baseline, run_episode as baseline_run_epi
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR   = PROJECT_ROOT / "training" / "configs"
-OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR      = PROJECT_ROOT / "results"
 
 BASE_SEED       = 42
 # Far outside training (seed+1..seed+500 = 43..542), RL eval

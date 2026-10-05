@@ -38,7 +38,7 @@ This project builds a distributional RL market maker using QR-DQN and IQN with a
 ├── encoders/       # Snapshot state representation modules (handcrafted, CNN, AE)
 ├── agents/         # RL agent implementations (snapshot + recurrent variants)
 ├── training/       # Training loops and configs
-├── evaluation/     # Metrics, analysis, visualization, results (see evaluation/results_scaled_down_sweep/)
+├── evaluation/     # Metrics, analysis, visualization, results (see results/)
 ├── data/           # LOBSTER / crypto data + processing
 ├── notebooks/      # Exploratory analysis and figures
 ├── tests/          # Unit tests
@@ -57,7 +57,7 @@ pip install -r requirements.txt
 ## Key Results
 
 Full results, methodology caveats, and reproduction commands:
-[`evaluation/results_scaled_down_sweep/README.md`](evaluation/results_scaled_down_sweep/README.md).
+[`results/README.md`](results/README.md).
 Interactive dashboard (training/eval curves, held-out comparison, AS-recovery,
 significance tests, CVaR frontier, encoder ablation, OOD transfer, stylized facts):
 ask in a Claude Code session with this project's conversation history for the
@@ -115,4 +115,4 @@ Items below would enrich/strengthen them further:
 
 ## References
 See [`docs/literature/`](docs/literature/) for annotated bibliography.
-See [`evaluation/results_scaled_down_sweep/`](evaluation/results_scaled_down_sweep/) for all run results and reproduction commands.
+See [`results/`](results/) for all run results and reproduction commands.

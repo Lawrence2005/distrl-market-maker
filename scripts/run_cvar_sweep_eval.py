@@ -47,7 +47,7 @@ from scripts.run_analysis import AGENT_CKPT_KWARGS, _MIN_EPISODES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR   = PROJECT_ROOT / "training" / "configs"
-OUT_DIR      = PROJECT_ROOT / "evaluation" / "results_scaled_down_sweep"
+OUT_DIR      = PROJECT_ROOT / "results"
 
 # Far outside training (seed+1..seed+500), RL eval-during-training
 # (seed+10000+{0,1,2}), and AS-recovery's own seed block below — matches

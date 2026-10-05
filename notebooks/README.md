@@ -18,4 +18,4 @@ environment, which can't produce meaningful fill/skew behavior regardless of its
 stale constants; 09 referenced the flash_crash regime and a `Visualizer.plot_flash_crash`
 method both removed from the project. Current baseline analysis and AS-recovery live in
 `scripts/run_baseline.py` / `scripts/run_analysis.py`, verified against real ABIDES — see
-`evaluation/results_scaled_down_sweep/README.md`.
+`results/README.md`.
