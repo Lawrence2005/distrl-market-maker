@@ -64,3 +64,6 @@ dashboard.html
 
 # arXiv preprint (in progress, author metadata still a placeholder)
 paper/
+
+# Claude Code project instructions (local guidance, not for the repo)
+CLAUDE.md
