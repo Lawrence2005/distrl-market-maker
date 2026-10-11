@@ -76,7 +76,7 @@ class MultiAgentMarketEnv:
     order_size  : int   — shares per submitted order (default 100)
     tick_size   : float — dollar value of one tick (default 0.01)
     reward_type : str   — reward formulation (default 'asymmetric')
-    eta         : float — asymmetric reward dampening (default 0.5)
+    eta         : float — weight on adverse inventory PnL in the asymmetric reward (default 0.5)
     use_abides  : bool  — use ABIDES or synthetic GBM (default True)
     seed        : int   — random seed (default 42)
     """
@@ -342,8 +342,7 @@ class MultiAgentMarketEnv:
     ) -> float:
         if self.reward_type == "asymmetric":
             # Penalise adverse (negative) inventory PnL only — matches
-            # envs/lob_env.py's asymmetric reward (that one is correct;
-            # this reimplementation had the sign backwards).
+            # envs/lob_env.py's asymmetric reward (docs/mdp_formulation.md §4A).
             return pnl - self.eta * max(0.0, -inv_pnl)
         if self.reward_type == "quadratic":
             return pnl - 0.1 * inventory ** 2

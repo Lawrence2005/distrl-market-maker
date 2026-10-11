@@ -10,18 +10,21 @@ Run with:
 import pytest
 import torch
 from encoders.cnn import CNNEncoder
+from encoders.base import PRIVATE_FEATURE_DIM
 
 
-N_LEVELS   = 10
-INPUT_DIM  = 2 * N_LEVELS   # = 20
-LATENT_DIM = 32
-BATCH      = 4
-SEQ_LEN    = 30
+N_LEVELS          = 10
+MARKET_INPUT_DIM  = 2 * N_LEVELS           # = 20, the convolved part
+INPUT_DIM         = MARKET_INPUT_DIM + PRIVATE_FEATURE_DIM  # = 26, what enc() takes
+MARKET_LATENT_DIM = 32                     # the `latent_dim` constructor arg
+LATENT_DIM        = MARKET_LATENT_DIM + PRIVATE_FEATURE_DIM  # the `.latent_dim` property
+BATCH             = 4
+SEQ_LEN           = 30
 
 
 @pytest.fixture
 def enc():
-    return CNNEncoder(n_levels=N_LEVELS, latent_dim=LATENT_DIM)
+    return CNNEncoder(n_levels=N_LEVELS, latent_dim=MARKET_LATENT_DIM)
 
 
 # ── Construction ──────────────────────────────────────────────────────────────
@@ -30,20 +33,22 @@ class TestCNNConstruction:
     def test_default_construction(self):
         enc = CNNEncoder()
         assert enc.n_levels == 10
-        assert enc.latent_dim == 32
+        assert enc.latent_dim == 32 + PRIVATE_FEATURE_DIM
         assert enc.input_dim == 20
 
     def test_custom_params(self):
         enc = CNNEncoder(n_levels=5, conv1_channels=16,
                          conv2_channels=8, latent_dim=16, kernel_size=3)
-        assert enc.latent_dim == 16
+        assert enc.latent_dim == 16 + PRIVATE_FEATURE_DIM
         assert enc.input_dim == 10
 
     def test_latent_dim_property(self, enc):
         assert enc.latent_dim == LATENT_DIM
 
     def test_input_dim_property(self, enc):
-        assert enc.input_dim == INPUT_DIM
+        """input_dim is the market-only (convolved) part; the private tail
+        rides alongside it and is not counted here."""
+        assert enc.input_dim == MARKET_INPUT_DIM
 
     def test_has_parameters(self, enc):
         """CNN encoder has learnable parameters."""
@@ -67,12 +72,12 @@ class TestCNNConstruction:
             "kernel_size": 3,
         }
         enc = CNNEncoder.from_config(cfg)
-        assert enc.latent_dim == 32
+        assert enc.latent_dim == 32 + PRIVATE_FEATURE_DIM
         assert enc.input_dim == 20
 
     def test_from_config_defaults(self):
         enc = CNNEncoder.from_config({})
-        assert enc.latent_dim == 32
+        assert enc.latent_dim == 32 + PRIVATE_FEATURE_DIM
 
 
 # ── Single-step forward ───────────────────────────────────────────────────────
@@ -105,6 +110,26 @@ class TestCNNSingleStep:
     def test_different_inputs_different_outputs(self, enc):
         x1 = torch.randn(BATCH, INPUT_DIM)
         x2 = torch.randn(BATCH, INPUT_DIM)
+        assert not torch.allclose(enc(x1), enc(x2))
+
+    def test_private_tail_passes_through_unchanged(self, enc):
+        """The last PRIVATE_FEATURE_DIM columns of the input (inventory,
+        quote distances, outstanding offsets, time remaining) must appear
+        verbatim in the last PRIVATE_FEATURE_DIM columns of the output —
+        they are not convolved, just carried through."""
+        enc.eval()
+        x = torch.randn(BATCH, INPUT_DIM)
+        z = enc(x)
+        assert torch.allclose(z[:, -PRIVATE_FEATURE_DIM:], x[:, -PRIVATE_FEATURE_DIM:])
+
+    def test_private_tail_changes_output_even_with_fixed_market(self, enc):
+        """Two inputs that differ ONLY in the private tail must produce
+        different outputs — regression for the bug where this tail was
+        silently discarded (the agent was blind to its own inventory)."""
+        enc.eval()
+        market = torch.randn(BATCH, MARKET_INPUT_DIM)
+        x1 = torch.cat([market, torch.zeros(BATCH, PRIVATE_FEATURE_DIM)], dim=-1)
+        x2 = torch.cat([market, torch.ones(BATCH, PRIVATE_FEATURE_DIM)], dim=-1)
         assert not torch.allclose(enc(x1), enc(x2))
 
 
@@ -141,12 +166,12 @@ class TestCNNLatentDimAblation:
     def test_output_shape_per_latent_dim(self, latent_dim):
         enc = CNNEncoder(latent_dim=latent_dim)
         x = torch.randn(BATCH, INPUT_DIM)
-        assert enc(x).shape == (BATCH, latent_dim)
+        assert enc(x).shape == (BATCH, latent_dim + PRIVATE_FEATURE_DIM)
 
     @pytest.mark.parametrize("latent_dim", [8, 16, 32])
     def test_latent_dim_property_per_variant(self, latent_dim):
         enc = CNNEncoder(latent_dim=latent_dim)
-        assert enc.latent_dim == latent_dim
+        assert enc.latent_dim == latent_dim + PRIVATE_FEATURE_DIM
 
 
 # ── Gradient flow ─────────────────────────────────────────────────────────────
@@ -187,4 +212,4 @@ class TestCNNSamePadding:
         """
         enc = CNNEncoder(latent_dim=16, kernel_size=kernel_size)
         x = torch.randn(BATCH, INPUT_DIM)
-        assert enc(x).shape == (BATCH, 16)
+        assert enc(x).shape == (BATCH, 16 + PRIVATE_FEATURE_DIM)

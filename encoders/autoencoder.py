@@ -72,7 +72,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from encoders.base import BaseEncoder
+from encoders.base import BaseEncoder, PRIVATE_FEATURE_DIM
 
 # Import LOBEncoder from pretrain_ae so the architecture definition
 # lives in exactly one place — no duplication.
@@ -112,10 +112,12 @@ class AEEncoder(BaseEncoder):
     @property
     def latent_dim(self) -> int:
         """
-        Output dimension fed to the LSTM.
+        Output dimension fed to the LSTM: the frozen AE's bottleneck
+        dimension plus the PRIVATE_FEATURE_DIM private features carried
+        through unencoded by _encode_batch below.
         RecurrentBase reads this to set lstm.input_size.
         """
-        return self._encoder.latent_dim
+        return self._encoder.latent_dim + PRIVATE_FEATURE_DIM
 
     @property
     def input_dim(self) -> int:
@@ -128,16 +130,24 @@ class AEEncoder(BaseEncoder):
 
         Parameters
         ----------
-        x : Tensor shape (B, input_dim) or (B, T, input_dim)
+        x : Tensor shape (B, input_dim + PRIVATE_FEATURE_DIM)
+            or (B, T, input_dim + PRIVATE_FEATURE_DIM)
             Raw LOB depth snapshot (share counts) — ask_sizes[L1..LK] +
-            bid_sizes[L1..LK]. NOT the handcrafted obs vector from
-            _get_obs().
+            bid_sizes[L1..LK] — followed by PRIVATE_FEATURE_DIM private
+            features (inventory, quote distances, outstanding offsets,
+            time remaining; see training/rollout.py's get_encoder_input()).
+            The frozen AE only ever sees the first input_dim columns; the
+            private tail bypasses it and is concatenated back on raw,
+            since the pretrained weights were never fit to it.
 
         Returns
         -------
         Tensor shape (B, latent_dim) or (B, T, latent_dim)
         """
-        return self._encoder(self._normalize(x))
+        market  = x[..., : self.input_dim]
+        private = x[..., self.input_dim : self.input_dim + PRIVATE_FEATURE_DIM]
+        z = self._encoder(self._normalize(market))
+        return torch.cat([z, private], dim=-1)
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         """

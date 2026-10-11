@@ -138,6 +138,15 @@ def build() -> dict:
         "ood_transfer_episodes": csv_records(RESULTS_DIR / "ood_transfer_episodes.csv"),
         "ood_transfer_summary": csv_records(RESULTS_DIR / "ood_transfer_summary.csv"),
         "cvar_efficient_frontier": csv_records(RESULTS_DIR / "cvar_efficient_frontier.csv"),
+        # scripts/run_encoder_ablation_eval.py evaluates all 8 (agent,
+        # encoder) combos — DQN/PPO/QR-DQN/IQN x {cnn, autoencoder} — in one
+        # process and writes ONE set of encoder_ablation_*.csv files (richer
+        # schema: variant/agent/encoder columns for every row, QR-DQN
+        # included). The dashboard's single encoder-ablation section reads
+        # these directly, unfiltered — one chart and one pair of tables
+        # covering all 4 agents, not split by agent.
+        "encoder_ablation_holdout": csv_records(RESULTS_DIR / "encoder_ablation_holdout.csv"),
+        "encoder_ablation_as_recovery": csv_records(RESULTS_DIR / "encoder_ablation_as_recovery.csv"),
         "encoder_ablation_summary": csv_records(RESULTS_DIR / "encoder_ablation_summary.csv"),
         "encoder_ablation_significance": csv_records(RESULTS_DIR / "encoder_ablation_significance.csv"),
         # Recurrent-vs-snapshot is its own comparison axis (an LSTM backbone
@@ -158,15 +167,9 @@ def build() -> dict:
         # scripts/run_cvar_sweep_eval.py, since AS-recovery uses its own fixed
         # seed block, not the holdout one).
         "cvar_sweep_as_recovery": csv_records(RESULTS_DIR / "cvar_sweep_as_recovery.csv"),
-        # Completes the 17-variant grid: DQN/PPO/IQN each x {cnn, autoencoder}
-        # (QR-DQN's row was already in encoder_ablation_* above). Separate
-        # file set, not merged into encoder_ablation_* — that file's schema
-        # has no agent column and its dashboard section is already published
-        # as QR-DQN-specific; this stays a parallel section instead.
-        "encoder_ablation_multiagent_holdout": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_holdout.csv"),
-        "encoder_ablation_multiagent_as_recovery": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_as_recovery.csv"),
-        "encoder_ablation_multiagent_significance": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_significance.csv"),
-        "encoder_ablation_multiagent_summary": csv_records(RESULTS_DIR / "encoder_ablation_multiagent_summary.csv"),
+        # Our asymmetric reward (adverse-inventory penalty) vs. its reversed-sign
+        # comparator, per (agent, regime, seed) — scripts/run_reward_comparison_eval.py.
+        "reward_comparison_summary": csv_records(RESULTS_DIR / "reward_comparison_summary.csv"),
     }
     stylized_path = RESULTS_DIR / "stylized_facts.json"
     data["stylized_facts"] = load_json(stylized_path) if stylized_path.exists() else {}

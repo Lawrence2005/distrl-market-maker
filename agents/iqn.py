@@ -483,11 +483,13 @@ class IQNAgent(AgentBase):
         lstm_out, _ = self.online_base.forward(x.unsqueeze(1))  # (1, 1, hidden_dim)
         h_last      = lstm_out[:, -1, :]                         # (1, hidden_dim)
 
-        # Sample τ from lower tail for CVaR action selection
+        # Sample τ ~ U[0, α]. The mean over these K samples is the CVaR_α
+        # estimate, so no further tail restriction is applied here (applying
+        # _cvar_action's bottom-α slice on top would restrict the tail to α²).
         tau = self._sample_tau_cvar(1, self.n_quantile_samples)
         Z   = self.online_head(h_last, tau)                      # (1, K, n_actions)
 
-        return int(self._cvar_action(Z).item())
+        return int(Z.mean(dim=1).argmax(dim=-1).item())
 
     def reset_hidden(self, batch_size: int = 1) -> None:
         """Reset LSTM hidden state. Call at episode start."""

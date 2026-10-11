@@ -80,7 +80,7 @@ def load_agent(
     # agent kwargs
     n_actions:    int = None,
     hidden_dim:   int = 128,
-    n_quantiles:  int = 200,
+    n_quantiles:  int = 32,
     n_quantile_samples: int = 64,
     embedding_dim: int = 64,
     use_lstm:     bool = False,
@@ -109,7 +109,7 @@ def load_agent(
     ae_checkpoint : str — AE encoder checkpoint path (for autoencoder type)
     n_actions     : int — flat action space size (default N_OFFSET_LEVELS^2)
     hidden_dim    : int — LSTM hidden size (default 128)
-    n_quantiles   : int — QR-DQN quantile atoms (default 200)
+    n_quantiles   : int — QR-DQN quantile atoms (default 32)
     n_quantile_samples : int — IQN quantile samples (default 64)
     use_lstm      : bool — must match how the checkpoint was trained
         (train.py's variant=recurrent → True, variant=null/snapshot → False,

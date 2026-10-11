@@ -19,7 +19,7 @@
 
 set -uo pipefail
 
-MAX_CONCURRENT=2
+MAX_CONCURRENT=3
 POLL_INTERVAL=120
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

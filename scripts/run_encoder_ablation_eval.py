@@ -1,16 +1,22 @@
 """
 scripts/run_encoder_ablation_eval.py
 
-Encoder ablation evaluation. QR-DQN was trained with 2 additional SNAPSHOT
-encoders (cnn, autoencoder) at alpha=0.25, normal regime, alongside the
-existing handcrafted-snapshot result already on the dashboard. This script
-evaluates both on the SAME held-out seed block scripts/run_holdout_eval.py
-uses (seed+80000+i), runs AS-recovery for each, and runs a paired
-significance test against the EXISTING handcrafted-QRDQN-normal-alpha0.25
-held-out episodes (already in holdout_eval.csv, same 15 seeds) — not against
-GLFT, since the research question here is "does a different state
-representation change QR-DQN's policy," not "does it beat the analytical
-baseline."
+Encoder ablation evaluation for the full grid: DQN, PPO, QR-DQN, and IQN
+were each trained with 2 additional snapshot encoders (cnn, autoencoder),
+alongside their existing handcrafted-snapshot result already in
+holdout_eval.csv. This single script evaluates all 8 (agent, encoder)
+combinations in one process — every checkpoint is loaded and rolled out
+exactly once here, rather than split across a QR-DQN-only script and a
+second script for the other three agents.
+
+For each combo, this runs the same rigor pass as every other result in
+this project: holdout eval on the standard 15-episode seed block
+(seed+80000+i), AS-recovery on the standard AS_RECOVERY_SEED, and a
+paired significance test against that SAME agent's own existing
+handcrafted-normal held-out episodes (already in holdout_eval.csv) — not
+against GLFT, since the question here is "does a different state
+representation change this agent's policy," not "does it beat the
+analytical baseline."
 
 Usage:
     python scripts/run_encoder_ablation_eval.py --n_episodes 15
@@ -32,47 +38,52 @@ from training.evaluate import load_agent
 from training.factory import build_env
 from training.rollout import run_episode as rl_run_episode, find_best_checkpoint, find_latest_checkpoint
 from evaluation.as_recovery import run_recovery_all_agents, recovery_summary_df
-from scripts.run_analysis import _MIN_EPISODES
+from evaluation.ablation import _run_tag as _ablation_run_tag
+from scripts.run_analysis import AGENT_CKPT_KWARGS, _MIN_EPISODES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR   = PROJECT_ROOT / "training" / "configs"
 OUT_DIR      = PROJECT_ROOT / "results"
 
-BASE_SEED         = 42
-HOLDOUT_OFFSET    = 80000  # matches scripts/run_holdout_eval.py
+BASE_SEED        = 42
+HOLDOUT_OFFSET   = 80000  # matches scripts/run_holdout_eval.py
 # Was 500 — with n_episodes=500 training runs use seed+1..seed+500 (43-542),
 # so seeds 500-514 (base 500 + 15 AS-recovery episodes) exactly replayed
 # each agent's own training episodes 458-472, rather than unseen market
-# realizations. 95000 is disjoint from training (43 up to 2042 even at
-# config.yaml's top-level default n_episodes=2000), RL eval-during-training
+# realizations. 95000 is disjoint from training, RL eval-during-training
 # (10042-10044), and the holdout block (80042+).
-AS_RECOVERY_SEED  = 95000
-REGIME            = "normal"
-BASELINE_ENCODER  = "handcrafted"  # the comparison point, already in holdout_eval.csv
+AS_RECOVERY_SEED = 95000
+REGIME           = "normal"
 
-# (label, run_tag, load_agent kwargs beyond agent_type/n_actions)
-ENCODERS = {
-    "cnn": dict(
-        # _per, not _uniform: this is the fresh checkpoint from the current
-        # full-corpus retrain campaign (qrdqn defaults to real PER now).
-        run_tag="qrdqn_cnn_asymmetric_normal_alpha0.25_per_seed42",
-        encoder_type="cnn",
-        # latent_dim=8, matching encoders/cnn.yaml — capacity-matched
-        # against the AE encoder below (see that file's comment for why).
-        load_kwargs=dict(hidden_dim=256, n_quantiles=32, n_levels=10, latent_dim=8),
-    ),
-    "autoencoder": dict(
-        run_tag="qrdqn_autoencoder_asymmetric_normal_alpha0.25_per_seed42",
-        encoder_type="autoencoder",
-        # latent_dim=8: input_dim is 20, so the old latent_dim=32 was an
-        # over-complete, non-bottlenecked autoencoder (see
-        # encoders/autoencoder.yaml's comment for the numeric evidence).
-        load_kwargs=dict(hidden_dim=256, n_quantiles=32, latent_dim=8,
-                          ae_checkpoint=str(PROJECT_ROOT / "checkpoints" / "ae_encoder_8.pt")),
-    ),
-    # "recurrent" used to live here — moved to scripts/run_recurrent_variant_eval.py
-    # (see this file's module docstring for why).
-}
+AGENTS   = ["dqn", "ppo", "qrdqn", "iqn"]
+ENCODERS = ["cnn", "autoencoder"]
+
+# Capacity-matched encoder extras: latent_dim=8 for both, so the cnn-vs-AE
+# comparison isn't confounded by one encoder having more representational
+# capacity than the other (see encoders/cnn.yaml and encoders/autoencoder.yaml
+# for the numeric evidence behind this choice).
+_CNN_EXTRAS = dict(n_levels=10, latent_dim=8)
+_AE_EXTRAS  = dict(latent_dim=8, ae_checkpoint=str(PROJECT_ROOT / "checkpoints" / "ae_encoder_8.pt"))
+_ENCODER_EXTRAS = {"cnn": _CNN_EXTRAS, "autoencoder": _AE_EXTRAS}
+
+
+def _combo_spec(agent: str, encoder: str) -> dict:
+    # alpha/sampling convention matches every other script this campaign
+    # uses to build run tags (run_reward_comparison_eval.py, run_analysis.py):
+    # alpha applies only to the two CVaR agents, PER sampling to the three
+    # replay-buffer agents (ppo has neither).
+    alpha    = 0.25 if agent in ("qrdqn", "iqn") else None
+    sampling = "per" if agent in ("dqn", "qrdqn", "iqn") else None
+    return dict(
+        agent=agent, encoder=encoder,
+        run_tag=_ablation_run_tag(agent, encoder, "asymmetric", REGIME, BASE_SEED,
+                                   alpha=alpha, sampling=sampling),
+        load_kwargs=dict(**AGENT_CKPT_KWARGS[agent], **_ENCODER_EXTRAS[encoder]),
+    )
+
+
+COMBOS = {f"{agent}_{encoder}": _combo_spec(agent, encoder)
+          for agent in AGENTS for encoder in ENCODERS}
 
 
 def _resolve_best_checkpoint(run_tag: str, ext: str = "pt") -> Path | None:
@@ -105,32 +116,32 @@ def build_regime_env(seed: int):
     return build_env(env_cfg, reward_cfg, seed)
 
 
-def run_holdout_for_encoder(name: str, spec: dict, holdout_seeds: list[int]) -> list[dict]:
+def run_holdout_for_combo(name: str, spec: dict, holdout_seeds: list[int]) -> list[dict]:
     ckpt = _resolve_best_checkpoint(spec["run_tag"])
     if ckpt is None:
         print(f"  [skip] {spec['run_tag']}: no checkpoint found")
         return []
 
-    agent, enc_type = load_agent(str(ckpt), agent_type="qrdqn", encoder_type=spec["encoder_type"],
+    agent, enc_type = load_agent(str(ckpt), agent_type=spec["agent"], encoder_type=spec["encoder"],
                                   **spec["load_kwargs"])
     env = build_regime_env(seed=BASE_SEED)
     rows = []
     for i, seed in enumerate(holdout_seeds):
         t0 = time.time()
         m = rl_run_episode(env, agent, enc_type, training=False, seed=seed)
-        rows.append({"encoder": name, "seed": seed, "sharpe": m["sharpe"],
-                     "map": m["map"], "mdd": m["mdd"], "final_pnl": m["final_pnl"]})
-        print(f"  {name:12s} ep {i+1:2d}/{len(holdout_seeds)} "
+        rows.append({"variant": name, "agent": spec["agent"], "encoder": spec["encoder"], "seed": seed,
+                     "sharpe": m["sharpe"], "map": m["map"], "mdd": m["mdd"], "final_pnl": m["final_pnl"]})
+        print(f"  {name:16s} ep {i+1:2d}/{len(holdout_seeds)} "
               f"sharpe {m['sharpe']:+.3f}  ({time.time()-t0:.0f}s)  ckpt={ckpt.name}", flush=True)
     env.close()
     return rows
 
 
-def run_as_recovery_for_encoder(name: str, spec: dict) -> pd.DataFrame | None:
+def run_as_recovery_for_combo(name: str, spec: dict) -> pd.DataFrame | None:
     ckpt = _resolve_best_checkpoint(spec["run_tag"])
     if ckpt is None:
         return None
-    agent, enc_type = load_agent(str(ckpt), agent_type="qrdqn", encoder_type=spec["encoder_type"],
+    agent, enc_type = load_agent(str(ckpt), agent_type=spec["agent"], encoder_type=spec["encoder"],
                                   **spec["load_kwargs"])
     env = build_regime_env(seed=AS_RECOVERY_SEED)
     results = run_recovery_all_agents({name: agent}, env, enc_type=enc_type,
@@ -140,45 +151,46 @@ def run_as_recovery_for_encoder(name: str, spec: dict) -> pd.DataFrame | None:
     return df
 
 
-def load_baseline_holdout() -> pd.DataFrame:
-    """Existing handcrafted-QRDQN-normal-alpha0.25 held-out episodes, same 15 seeds."""
+def load_baseline_holdout(agent_type: str) -> pd.DataFrame:
+    """This agent's existing handcrafted-normal held-out episodes, same 15 seeds."""
     holdout_path = OUT_DIR / "holdout_eval.csv"
     df = pd.read_csv(holdout_path)
-    sub = df[(df["type"] == "rl") & (df["regime"] == REGIME) & (df["model"] == "qrdqn")].copy()
-    sub["encoder"] = BASELINE_ENCODER
-    return sub[["encoder", "seed", "sharpe", "map", "mdd", "final_pnl"]]
+    sub = df[(df["type"] == "rl") & (df["regime"] == REGIME) & (df["model"] == agent_type)].copy()
+    return sub[["seed", "sharpe", "map", "mdd", "final_pnl"]]
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--n_episodes", type=int, default=15)
     p.add_argument("--skip", nargs="+", default=[],
-                   help="Encoder names to skip (e.g. --skip autoencoder), "
+                   help="Combo names to skip (e.g. --skip ppo_autoencoder), "
                         "for when a checkpoint isn't ready yet — its rows "
                         "just won't appear in the output, no placeholder.")
     args = p.parse_args()
 
-    encoders_to_run = {k: v for k, v in ENCODERS.items() if k not in args.skip}
+    combos_to_run = {k: v for k, v in COMBOS.items() if k not in args.skip}
     if args.skip:
         print(f"Skipping: {', '.join(args.skip)}")
 
     holdout_seeds = [BASE_SEED + HOLDOUT_OFFSET + i for i in range(args.n_episodes)]
     print(f"Holdout seed block: {holdout_seeds[0]}..{holdout_seeds[-1]} "
           f"({args.n_episodes} episodes)")
+    print(f"Combos ({len(combos_to_run)}): {', '.join(combos_to_run)}")
 
-    baseline_df = load_baseline_holdout()
-    all_rows = list(baseline_df.to_dict("records"))
+    all_rows = []
     as_recovery_frames = []
 
-    for name, spec in encoders_to_run.items():
-        print(f"\n{'='*78}\nHOLDOUT EVAL — QR-DQN + {name} encoder\n{'='*78}")
-        all_rows.extend(run_holdout_for_encoder(name, spec, holdout_seeds))
+    for name, spec in combos_to_run.items():
+        print(f"\n{'='*78}\nHOLDOUT EVAL — {name}\n{'='*78}")
+        all_rows.extend(run_holdout_for_combo(name, spec, holdout_seeds))
 
-    for name, spec in encoders_to_run.items():
-        print(f"\n{'='*78}\nAS-RECOVERY — QR-DQN + {name} encoder\n{'='*78}")
-        df = run_as_recovery_for_encoder(name, spec)
+    for name, spec in combos_to_run.items():
+        print(f"\n{'='*78}\nAS-RECOVERY — {name}\n{'='*78}")
+        df = run_as_recovery_for_combo(name, spec)
         if df is not None:
-            df["encoder"] = name
+            df["variant"] = name
+            df["agent"] = spec["agent"]
+            df["encoder"] = spec["encoder"]
             as_recovery_frames.append(df)
             print(df.to_string(index=False))
 
@@ -190,15 +202,19 @@ def main() -> None:
         pd.concat(as_recovery_frames, ignore_index=True).to_csv(
             OUT_DIR / "encoder_ablation_as_recovery.csv", index=False)
 
-    # ── Significance test: each new encoder vs. handcrafted, paired on seed ──
+    # ── Significance test: each combo vs. its own agent's handcrafted baseline ──
     sig_rows = []
-    baseline_by_seed = baseline_df.set_index("seed")["sharpe"]
-    for name in encoders_to_run:
-        enc_rows = holdout_df[holdout_df["encoder"] == name].set_index("seed")["sharpe"]
-        if enc_rows.empty:
+    for name, spec in combos_to_run.items():
+        combo_rows = holdout_df[holdout_df["variant"] == name].set_index("seed")["sharpe"]
+        if combo_rows.empty:
             continue
-        shared_seeds = sorted(set(enc_rows.index) & set(baseline_by_seed.index))
-        a = enc_rows.loc[shared_seeds].to_numpy()
+        baseline_df = load_baseline_holdout(spec["agent"])
+        baseline_by_seed = baseline_df.set_index("seed")["sharpe"]
+        shared_seeds = sorted(set(combo_rows.index) & set(baseline_by_seed.index))
+        if not shared_seeds:
+            print(f"  [warn] {name}: no shared seeds with handcrafted baseline — skipping sig test")
+            continue
+        a = combo_rows.loc[shared_seeds].to_numpy()
         b = baseline_by_seed.loc[shared_seeds].to_numpy()
         diff = a - b
         t_p = ttest_rel(a, b).pvalue
@@ -207,28 +223,28 @@ def main() -> None:
         except ValueError:
             w_p = float("nan")
         sig_rows.append({
-            "encoder": name,
+            "variant": name, "agent": spec["agent"], "encoder": spec["encoder"],
+            "encoder_sharpe_mean": a.mean(), "handcrafted_sharpe_mean": b.mean(),
             "mean_diff_vs_handcrafted": diff.mean(),
-            "t_p": t_p,
-            "wilcoxon_p": w_p,
+            "t_p": t_p, "wilcoxon_p": w_p,
             "significantly_different_p05": bool(w_p < 0.05),
         })
     sig_df = pd.DataFrame(sig_rows)
     sig_df.to_csv(OUT_DIR / "encoder_ablation_significance.csv", index=False)
 
     summary = (
-        holdout_df.groupby("encoder")["sharpe"]
+        holdout_df.groupby(["agent", "encoder", "variant"])["sharpe"]
         .agg(sharpe_mean="mean", sharpe_std="std", n="count")
         .reset_index()
-        .sort_values("sharpe_mean", ascending=False)
+        .sort_values(["agent", "sharpe_mean"], ascending=[True, False])
     )
     summary.to_csv(OUT_DIR / "encoder_ablation_summary.csv", index=False)
 
-    print(f"\n{'='*78}\nENCODER ABLATION SUMMARY\n{'='*78}")
+    print(f"\n{'='*78}\nENCODER ABLATION SUMMARY (all 8 combos)\n{'='*78}")
     print(summary.to_string(index=False))
-    print(f"\n{'='*78}\nSIGNIFICANCE VS. HANDCRAFTED\n{'='*78}")
+    print(f"\n{'='*78}\nSIGNIFICANCE VS. EACH AGENT'S OWN HANDCRAFTED BASELINE\n{'='*78}")
     print(sig_df.to_string(index=False))
-    print(f"\nSaved → {OUT_DIR / 'encoder_ablation_holdout.csv'}, "
+    print(f"\nSaved -> {OUT_DIR / 'encoder_ablation_holdout.csv'}, "
           f"{OUT_DIR / 'encoder_ablation_as_recovery.csv'}, "
           f"{OUT_DIR / 'encoder_ablation_significance.csv'}, "
           f"{OUT_DIR / 'encoder_ablation_summary.csv'}")

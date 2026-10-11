@@ -212,13 +212,13 @@ class LOBMarketMakingEnv(gym.Env):
     Parameters
     ----------
     reward_type : str   — 'asymmetric' | 'quadratic' | 'sparse'
-    eta         : float — inventory-PnL dampening for asymmetric reward (default 0.5)
+    eta         : float — weight on adverse inventory PnL in the asymmetric reward (default 0.5)
     lam         : float — quadratic inventory penalty coefficient (default 0.1)
     Q_max       : int   — hard inventory constraint |q| ≤ Q_max, in shares (default 1000)
     order_size  : int   — shares submitted per order (default 100, matching
         ABIDES background agents' typical lot size)
     tick_size   : float — price tick size in dollars (default 0.01)
-    episode_len : int   — steps per episode (default 3900 = one trading day)
+    episode_len : int   — steps per episode (default 390 = one 6.5 h trading day at 1 step/min)
     kappa       : float — terminal inventory penalty coefficient (default 1.0)
     n_lob_levels: int   — number of LOB depth levels to include (default 3)
     seed        : int
@@ -258,7 +258,7 @@ class LOBMarketMakingEnv(gym.Env):
         lam: float = 0.1,
         Q_max: int = 1000,
         tick_size: float = 0.01,
-        episode_len: int = 3900,
+        episode_len: int = 390,
         kappa: float = 1.0,
         n_lob_levels: int = 3,
         seed: int = 42,
@@ -286,7 +286,7 @@ class LOBMarketMakingEnv(gym.Env):
         self.n_lob_levels = cfg.get("n_lob_levels", n_lob_levels)
         self.seed_val = cfg.get("seed", seed)
 
-        assert self.reward_type in ("asymmetric", "quadratic", "sparse"), (f"reward_type must be 'asymmetric', 'quadratic', or 'sparse', "f"got '{self.reward_type}'")
+        assert self.reward_type in ("asymmetric", "asymmetric_spooner", "quadratic", "sparse"), (f"reward_type must be 'asymmetric', 'asymmetric_spooner', 'quadratic', or 'sparse', "f"got '{self.reward_type}'")
 
         self._sigma_override = None  # optional vol override
 
@@ -580,9 +580,18 @@ class LOBMarketMakingEnv(gym.Env):
         pnl = psi_a + psi_b + inventory_pnl
 
         if self.reward_type == "asymmetric":
-            # Penalise adverse (negative) inventory PnL only.
+            # Our asymmetric reward (project primary): penalise adverse
+            # (negative) inventory PnL with weight eta. Gains count in full.
             # inv_pnl < 0 means inventory is working against us.
+            # See docs/mdp_formulation.md §4A.
             return pnl - self.eta * max(0.0, -inventory_pnl)
+
+        if self.reward_type == "asymmetric_spooner":
+            # Reverse-sign ablation of the asymmetric reward: penalise
+            # inventory GAINS with weight eta and leave losses unpenalised.
+            # Used only for sign sensitivity (scripts/run_reward_comparison_eval.py);
+            # it is not the project's reward. See docs/mdp_formulation.md §4A.
+            return pnl - self.eta * max(0.0, inventory_pnl)
 
         if self.reward_type == "quadratic":
             # Symmetric quadratic inventory penalty at every step.

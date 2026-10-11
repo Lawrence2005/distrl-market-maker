@@ -9,18 +9,23 @@ flowing back from the agent's loss function.
 
 Architecture (from configs/encoder/cnn.yaml)
 --------------------------------------------
-Input:  (B, 2*n_levels) = (B, 20) LOB depth snapshot
-        ask_sizes[L1..LK] + bid_sizes[L1..LK], per-side normalised
+Input:  (B, 2*n_levels + PRIVATE_FEATURE_DIM) = (B, 26) for n_levels=10
+        ask_sizes[L1..LK] + bid_sizes[L1..LK] (per-side normalised),
+        followed by PRIVATE_FEATURE_DIM private features (inventory,
+        quote distances, outstanding offsets, time remaining) — see
+        encoders/base.py and training/rollout.py's get_encoder_input().
 
-    Reshape    → (B, 1, 2*n_levels)
+    market = x[:, :2*n_levels]; private = x[:, 2*n_levels:]
+    Reshape(market) → (B, 1, 2*n_levels)
     Conv1d(1 → conv1_channels, kernel_size, padding=kernel_size//2)
     ReLU
     Conv1d(conv1_channels → conv2_channels, kernel_size, padding=kernel_size//2)
     ReLU
     Flatten    → (B, conv2_channels * 2*n_levels)
-    Linear(conv2_channels * 2*n_levels → latent_dim)
+    Linear(conv2_channels * 2*n_levels → latent_dim arg, the market compression)
+    Concat with private, unchanged → (B, latent_dim arg + PRIVATE_FEATURE_DIM)
 
-Output: (B, latent_dim)
+Output: (B, latent_dim)   — latent_dim PROPERTY = latent_dim arg + PRIVATE_FEATURE_DIM
 
 Same-padding (padding = kernel_size // 2) preserves spatial length so
 the flat dimension is always conv2_channels * 2*n_levels regardless of
@@ -60,7 +65,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from encoders.base import BaseEncoder
+from encoders.base import BaseEncoder, PRIVATE_FEATURE_DIM
 
 
 class CNNEncoder(BaseEncoder):
@@ -123,17 +128,29 @@ class CNNEncoder(BaseEncoder):
     @property
     def latent_dim(self) -> int:
         """
-        Output dimension fed to the LSTM.
+        Output dimension fed to the LSTM: the market compression
+        (_latent_dim) plus the PRIVATE_FEATURE_DIM private features
+        carried through unencoded by _encode_batch below.
         RecurrentBase reads this to set lstm.input_size.
         """
-        return self._latent_dim
+        return self._latent_dim + PRIVATE_FEATURE_DIM
 
     def _encode_batch(self, x: torch.Tensor) -> torch.Tensor:
-        """Single-step encoding: (B, input_dim) → (B, latent_dim)."""
-        h = x.unsqueeze(1)           # (B, 1, input_dim)
+        """
+        Single-step encoding: (B, input_dim + PRIVATE_FEATURE_DIM) → (B, latent_dim).
+
+        x's last PRIVATE_FEATURE_DIM columns are inventory/quote-position/
+        time-remaining (see training/rollout.py's get_encoder_input()) —
+        carried through unchanged, not convolved, since there is nothing
+        spatial to exploit in six independent scalars.
+        """
+        market  = x[:, : self.input_dim]
+        private = x[:, self.input_dim : self.input_dim + PRIVATE_FEATURE_DIM]
+        h = market.unsqueeze(1)      # (B, 1, input_dim)
         h = self.conv(h)             # (B, conv2_channels, input_dim)
         h = h.flatten(start_dim=1)  # (B, flat_dim)
-        return self.proj(h)          # (B, latent_dim)
+        z = self.proj(h)             # (B, _latent_dim)
+        return torch.cat([z, private], dim=-1)   # (B, latent_dim)
 
     # ------------------------------------------------------------------
     # Factory methods

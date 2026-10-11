@@ -11,6 +11,7 @@ import pytest
 import torch
 from agents.recurrent_base import RecurrentBase, DuelingHead
 from encoders.handcrafted import HandcraftedEncoder
+from encoders.base import PRIVATE_FEATURE_DIM
 from encoders.cnn import CNNEncoder
 
 
@@ -96,7 +97,7 @@ class TestRecurrentBaseConstruction:
     def test_lstm_input_size_with_cnn_encoder(self):
         enc  = CNNEncoder(latent_dim=32)
         base = RecurrentBase(encoder=enc, n_actions=N_ACTIONS)
-        assert base.lstm.input_size == 32
+        assert base.lstm.input_size == 32 + PRIVATE_FEATURE_DIM
 
     def test_dueling_head_created_by_default(self, base):
         assert base.head is not None
@@ -324,7 +325,7 @@ class TestEncoderSwap:
             input_dim = OBS_DIM
         else:
             enc       = CNNEncoder(latent_dim=32)
-            input_dim = enc.input_dim   # = 20
+            input_dim = enc.input_dim + PRIVATE_FEATURE_DIM   # = 20 + 6 = 26
         base = RecurrentBase(encoder=enc, n_actions=N_ACTIONS)
         return base, input_dim
 

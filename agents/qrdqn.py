@@ -48,7 +48,7 @@ worst-case returns even at the cost of lower expected return.
 
 Parameters (from configs/agent/qrdqn.yaml)
 -------------------------------------------
-n_quantiles       : int   — number of quantile atoms N (default 200)
+n_quantiles       : int   — number of quantile atoms N (default 32)
 hidden_dim        : int   — LSTM hidden size (default 256)
 dueling           : bool  — use dueling decomposition (default True)
 lr                : float — Adam learning rate (default 1e-4)
@@ -171,7 +171,7 @@ class QRDQNAgent(AgentBase):
     ----------
     encoder            : nn.Module — any encoder with .latent_dim property
     n_actions          : int       — flat action space size
-    n_quantiles        : int       — quantile atoms N (default 200)
+    n_quantiles        : int       — quantile atoms N (default 32)
     hidden_dim         : int       — LSTM hidden size (default 128)
     dueling            : bool      — dueling decomposition (default True)
     lr                 : float     — Adam learning rate (default 1e-4)
@@ -198,7 +198,7 @@ class QRDQNAgent(AgentBase):
         self,
         encoder:             nn.Module,
         n_actions:           int,
-        n_quantiles:         int   = 200,
+        n_quantiles:         int   = 32,
         hidden_dim:          int   = 128,
         dueling:             bool  = True,
         lr:                  float = 1e-4,
@@ -353,7 +353,7 @@ class QRDQNAgent(AgentBase):
         Select action maximising CVaR_alpha of the return distribution.
 
         CVaR_α(Z(s,a)) = mean of bottom α fraction of quantiles.
-        With alpha=0.25 and N=200: average over the 50 lowest quantiles.
+        With alpha=0.25 and N=32: average over the 8 lowest quantiles.
 
         Parameters
         ----------

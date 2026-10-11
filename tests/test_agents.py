@@ -512,6 +512,20 @@ class TestIQNAgent:
         a = iqn.act(_obs(), greedy=True)
         assert 0 <= a < N_ACTIONS
 
+    def test_act_uses_mean_over_tail_samples(self, iqn, monkeypatch):
+        """Regression: act must take the mean over the K samples drawn from
+        U[0, alpha], not re-apply the bottom-alpha slice (which made the
+        effective tail alpha^2). Action 0 is steady at 1.0 (mean 1.0). Action 1
+        averages 1.5 but is 0 in its worst quarter, so the mean rule picks 1."""
+        K_ = iqn.n_quantile_samples
+        def fake_head(h, tau):
+            Z = torch.ones(1, K_, N_ACTIONS)
+            Z[:, : K_ // 2, 1] = 0.0
+            Z[:, K_ // 2 :, 1] = 3.0
+            return Z
+        monkeypatch.setattr(iqn, "online_head", fake_head)
+        assert iqn.act(_obs(), greedy=True) == 1
+
     def test_train_step_none_when_not_ready(self, iqn):
         iqn.observe(_obs(), 0, 0.0, _obs(), False)
         assert iqn.train_step() is None

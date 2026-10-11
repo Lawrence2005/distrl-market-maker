@@ -16,21 +16,24 @@ from pathlib import Path
 import pytest
 import torch
 from encoders.autoencoder import AEEncoder
+from encoders.base import PRIVATE_FEATURE_DIM
 from training.pretrain_ae import LOBAutoencoder
 
 
-INPUT_DIM  = 20   # 2 * n_levels, n_levels=10
-LATENT_DIM = 16
-BATCH      = 4
-SEQ_LEN    = 30
+MARKET_INPUT_DIM  = 20   # 2 * n_levels, n_levels=10 — what the frozen AE sees
+INPUT_DIM         = MARKET_INPUT_DIM + PRIVATE_FEATURE_DIM  # = 26, what enc() takes
+MARKET_LATENT_DIM = 16   # the checkpoint's bottleneck dim
+LATENT_DIM        = MARKET_LATENT_DIM + PRIVATE_FEATURE_DIM  # the `.latent_dim` property
+BATCH             = 4
+SEQ_LEN           = 30
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 def _make_checkpoint(
     tmp_path: Path,
-    latent_dim: int = LATENT_DIM,
-    input_dim:  int = INPUT_DIM,
+    latent_dim: int = MARKET_LATENT_DIM,
+    input_dim:  int = MARKET_INPUT_DIM,
     filename:   str = None,
 ) -> Path:
     """Build a temp checkpoint matching pretrain_ae.py's save_encoder format."""
@@ -64,10 +67,15 @@ class TestAECheckpointLoading:
         assert isinstance(enc, AEEncoder)
 
     def test_latent_dim_from_checkpoint(self, enc):
+        """.latent_dim is the checkpoint's bottleneck plus the private tail
+        — RecurrentBase sizes lstm.input_size off this, not off the
+        checkpoint's raw stored value."""
         assert enc.latent_dim == LATENT_DIM
 
     def test_input_dim_from_checkpoint(self, enc):
-        assert enc.input_dim == INPUT_DIM
+        """input_dim is the market-only size the frozen AE was pre-trained
+        on; the private tail is appended after it, not through it."""
+        assert enc.input_dim == MARKET_INPUT_DIM
 
     def test_accepts_str_path(self, ckpt_path):
         enc = AEEncoder.from_checkpoint(str(ckpt_path))
@@ -95,7 +103,7 @@ class TestAECheckpointLoading:
     def test_loads_each_ablation_variant(self, tmp_path, latent_dim):
         path = _make_checkpoint(tmp_path, latent_dim=latent_dim)
         enc  = AEEncoder.from_checkpoint(path)
-        assert enc.latent_dim == latent_dim
+        assert enc.latent_dim == latent_dim + PRIVATE_FEATURE_DIM
 
 
 # ── from_config ────────────────────────────────────────────────────────────────
@@ -104,7 +112,7 @@ class TestAEFromConfig:
     def test_from_config_matches_yaml_keys(self, ckpt_path):
         cfg = {
             "type": "autoencoder",
-            "latent_dim": LATENT_DIM,
+            "latent_dim": MARKET_LATENT_DIM,
             "pretrained_weights": str(ckpt_path),
             "freeze": True,
         }
@@ -169,6 +177,22 @@ class TestAESingleStep:
         z2 = enc(x)
         assert torch.allclose(z1, z2)
 
+    def test_private_tail_passes_through_unchanged(self, enc):
+        """The last PRIVATE_FEATURE_DIM columns (inventory, quote
+        distances, outstanding offsets, time remaining) must appear
+        verbatim in the output — they bypass the frozen AE entirely."""
+        x = torch.randn(BATCH, INPUT_DIM)
+        z = enc(x)
+        assert torch.allclose(z[:, -PRIVATE_FEATURE_DIM:], x[:, -PRIVATE_FEATURE_DIM:])
+
+    def test_private_tail_changes_output_even_with_fixed_market(self, enc):
+        """Regression for the bug where this tail was silently discarded —
+        the agent was blind to its own inventory and time remaining."""
+        market = torch.randn(BATCH, MARKET_INPUT_DIM)
+        x1 = torch.cat([market, torch.zeros(BATCH, PRIVATE_FEATURE_DIM)], dim=-1)
+        x2 = torch.cat([market, torch.ones(BATCH, PRIVATE_FEATURE_DIM)], dim=-1)
+        assert not torch.allclose(enc(x1), enc(x2))
+
 
 # ── Sequence forward ──────────────────────────────────────────────────────────
 
@@ -194,5 +218,5 @@ class TestAERepr:
     def test_repr_contains_dims(self, enc):
         r = repr(enc)
         assert str(LATENT_DIM) in r
-        assert str(INPUT_DIM) in r
+        assert str(MARKET_INPUT_DIM) in r
         assert "frozen=True" in r

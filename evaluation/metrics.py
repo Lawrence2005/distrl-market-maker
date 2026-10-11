@@ -125,7 +125,9 @@ def cvar(values: np.ndarray, alpha: float = 0.10) -> float:
     -------
     float — CVaR (always <= mean(values))
     """
-    v      = np.asarray(values, dtype=np.float64)
+    v = np.asarray(values, dtype=np.float64)
+    if len(v) == 0:
+        return 0.0
     n_tail = max(1, int(alpha * len(v)))
     return float(np.sort(v)[:n_tail].mean())
 

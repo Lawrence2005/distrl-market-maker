@@ -48,9 +48,16 @@ def get_encoder_input(
     Extract the correct input for the encoder from env step output.
 
     HandcraftedEncoder : obs vector (18-dim) from _get_obs()
-    CNNEncoder         : LOB depth snapshot (20-dim) from info["lob_snapshot"]
+    CNNEncoder         : LOB depth snapshot (20-dim) from info["lob_snapshot"],
+                          followed by the 6 private features from obs[12:18]
+                          (inventory, quote distances, outstanding offsets,
+                          time remaining) — 26-dim total. These two agents
+                          were blind to their own inventory and time
+                          remaining until this was fixed; see
+                          encoders/base.py::PRIVATE_FEATURE_DIM.
     AEEncoder          : LOB depth snapshot (20-dim) from info["lob_snapshot"],
-                          per-side normalized (see below)
+                          per-side normalized (see below), followed by the
+                          same 6 private features — 26-dim total.
 
     Parameters
     ----------
@@ -97,7 +104,14 @@ def get_encoder_input(
 
     snapshot = np.array(ask_sizes + bid_sizes, dtype=np.float32)
 
-    return snapshot
+    # Private features — inventory, active bid/ask quote distance,
+    # outstanding bid/ask offset, time remaining (obs[12:18], the same
+    # slice the handcrafted encoder already carries through unchanged).
+    # Appended raw (already normalised by _get_obs()) so CNN/AE agents
+    # are not blind to their own inventory and time remaining.
+    private = np.asarray(obs[12:18], dtype=np.float32)
+
+    return np.concatenate([snapshot, private])
 
 
 def compute_episode_metrics(

@@ -246,6 +246,37 @@ class TestReward:
         assert reward == pytest.approx(-10.0, rel=1e-4)
         env.close()
 
+    def test_reverse_sign_ablation_penalises_inventory_gain(self):
+        """Reverse-sign ablation: r = PnL - eta*max(0, inv_pnl).
+        Gains from inventory are penalised; losses are not."""
+        env = LOBMarketMakingEnv(reward_type="asymmetric_spooner", eta=1.0, seed=0)
+        env.reset()
+        env._mid_price = 101.0
+        env._prev_mid  = 100.0   # mid rose → long inventory gains money
+        reward = env._compute_reward(
+            matched_bid=0.0, matched_ask=0.0,
+            bid_price=99.0, ask_price=102.0,
+            inventory=5.0,
+        )
+        # inventory_pnl = 5 * (101 - 100) = +5
+        # reverse-sign: pnl - eta * max(0, +5) = 5 - 5 = 0 (gain penalised)
+        assert reward == pytest.approx(0.0, abs=1e-9)
+        env.close()
+
+    def test_reverse_sign_ablation_keeps_losses(self):
+        env = LOBMarketMakingEnv(reward_type="asymmetric_spooner", eta=1.0, seed=0)
+        env.reset()
+        env._mid_price = 100.0
+        env._prev_mid  = 101.0   # mid fell → long inventory loses money
+        reward = env._compute_reward(
+            matched_bid=0.0, matched_ask=0.0,
+            bid_price=99.0, ask_price=101.0,
+            inventory=5.0,
+        )
+        # inventory_pnl = -5; reverse-sign: pnl - eta*max(0, -5) = -5 (loss not penalised)
+        assert reward == pytest.approx(-5.0, rel=1e-4)
+        env.close()
+
     def test_quadratic_penalises_inventory_level(self):
         env = LOBMarketMakingEnv(reward_type="quadratic", lam=1.0, seed=0)
         env.reset()

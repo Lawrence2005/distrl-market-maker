@@ -61,14 +61,10 @@ pass, real market seeding that never worked at all — see below).
 | `cvar_sweep_as_recovery.csv` | AS-recovery R² for all 40 (agent, α, seed) combinations. |
 | `cvar_efficient_frontier_per_seed.csv` | Mean held-out P&L and CVaR₀.₁₀ per (agent, α, seed), computed directly from `cvar_sweep_holdout.csv` (not from in-sample train/eval history). |
 | `cvar_efficient_frontier.csv` | The above aggregated to mean ± std across the 4 seeds, per agent × α — this is the actual efficient-frontier table (genuine seed variance, not a single training run per point). |
-| `encoder_ablation_holdout.csv` | Per-episode held-out results for QR-DQN with cnn/autoencoder/recurrent encoders at α=0.25 (handcrafted pulled in from `holdout_eval.csv`, same seed block), `normal` regime. |
-| `encoder_ablation_as_recovery.csv` | AS-recovery R² for the 3 new encoders. |
-| `encoder_ablation_significance.csv` | Paired *t*-test/Wilcoxon of each new encoder vs. handcrafted QR-DQN, same 15 shared seeds. |
-| `encoder_ablation_summary.csv` | Held-out Sharpe mean/std per encoder (4 rows: handcrafted + 3 new). |
-| `encoder_ablation_multiagent_holdout.csv` | Per-episode held-out results for DQN/PPO/IQN with cnn/autoencoder encoders, `normal` regime — completes the 17-variant grid alongside `encoder_ablation_holdout.csv` (QR-DQN's row). Same seed block. |
-| `encoder_ablation_multiagent_as_recovery.csv` | AS-recovery R² for the 6 new (agent, encoder) combinations. |
-| `encoder_ablation_multiagent_significance.csv` | Paired *t*-test/Wilcoxon, each new combination vs. that same agent's own handcrafted baseline (from `holdout_eval.csv`), same shared seeds. |
-| `encoder_ablation_multiagent_summary.csv` | Held-out Sharpe mean/std per (agent, encoder) combination. |
+| `encoder_ablation_holdout.csv` | Per-episode held-out results for all 8 (agent, encoder) combinations — DQN/PPO/QR-DQN/IQN × {cnn, autoencoder}, `normal` regime, `variant`/`agent`/`encoder` columns on every row — evaluated in one process by `scripts/run_encoder_ablation_eval.py` (completes the 17-variant grid; handcrafted is pulled in from `holdout_eval.csv`, same seed block). The dashboard's one encoder-ablation section is built directly from this file, covering all 4 agents in a single chart and table pair. |
+| `encoder_ablation_as_recovery.csv` | AS-recovery R² for all 8 combinations. |
+| `encoder_ablation_significance.csv` | Paired *t*-test/Wilcoxon, each combination vs. that same agent's own handcrafted baseline (from `holdout_eval.csv`), same shared seeds. |
+| `encoder_ablation_summary.csv` | Held-out Sharpe mean/std per (agent, encoder) combination (8 rows). |
 | `recurrent_variant_holdout.csv` | Per-episode held-out results, snapshot-encoder policy vs. the same agent with an LSTM(128) backbone (`agents/recurrent_base.py`) in its place, across 10 variants: QR-DQN in all 3 regimes, DQN/IQN/PPO in `normal`, and QR-DQN/`normal` again at α ∈ {0.05, 0.10, 0.50, 1.00} (the CVaR-interaction extension; α=0.25 is the base `qrdqn_normal` row). Same 15-episode held-out block (`+80042..+80056`) used everywhere else. |
 | `recurrent_variant_as_recovery.csv` | AS-recovery R² for all 10 recurrent variants. |
 | `recurrent_variant_significance.csv` | Paired *t*-test/Wilcoxon, each recurrent variant vs. its own non-recurrent snapshot baseline, same shared seeds. |
@@ -80,8 +76,7 @@ Reproduce via `scripts/run_analysis.py` (AS-recovery + model comparison),
 `scripts/run_ood_transfer.py --n_episodes 15` (OOD transfer, all 6 directed regime pairs),
 `scripts/run_stylized_facts.py` (simulator audit),
 `scripts/run_cvar_sweep_eval.py --n_episodes 15` (CVaR alpha sweep eval),
-`scripts/run_encoder_ablation_eval.py --n_episodes 15` (encoder ablation eval, QR-DQN),
-`scripts/run_encoder_ablation_multiagent_eval.py --n_episodes 15` (encoder ablation eval, DQN/PPO/IQN), and
+`scripts/run_encoder_ablation_eval.py --n_episodes 15` (encoder ablation eval, all 8 agent x encoder combinations in one process), and
 `scripts/run_recurrent_variant_eval.py --n_episodes 15` (recurrent vs. snapshot, all 10 variants).
 `scripts/build_dashboard_data.py` assembles all of the above plus
 `logs/*/train_history.json` /`eval_history.json` into the dashboard's `viz_data.json`.
@@ -272,8 +267,11 @@ few distinct inventory levels visited) — decoupled from the Sharpe result
 exactly as seen elsewhere in this project (e.g. DQN/cnn significantly loses on
 Sharpe yet shows the same near-zero recovery, GLFT R²≈0.01, as DQN's own
 near-zero-recovery handcrafted baseline, R²=0.16). See
-`encoder_ablation_multiagent_holdout.csv`, `encoder_ablation_multiagent_significance.csv`,
-and `encoder_ablation_multiagent_as_recovery.csv` for the full tables.
+`encoder_ablation_holdout.csv`, `encoder_ablation_significance.csv`,
+and `encoder_ablation_as_recovery.csv` (filter to `agent != qrdqn`) for the full tables.
+[Note: these findings predate the private-feature fix (see memory/docs) and the
+encoder-ablation script merge — numbers here will change once the current eval
+chain's rerun lands; don't cite this paragraph until then.]
 
 ## Recurrent vs. snapshot
 
@@ -431,8 +429,10 @@ the same (agent=qrdqn, alpha, seed=42) rows on the corrected block too.
 
 An interactive visualization of all of the above (training/eval curves, loss curves,
 peak-vs-final drift analysis, the held-out comparison, AS-recovery, significance
-table, OOD transfer, CVaR efficient frontier, encoder ablation, and the
-stylized-facts audit) is checked into this directory as a self-contained
+table, OOD transfer, CVaR efficient frontier, encoder ablation, recurrent vs.
+snapshot, the reward comparison (our adverse-inventory penalty vs. its
+reversed-sign comparator), and the stylized-facts audit) is checked into this
+directory as a self-contained
 [`dashboard.html`](dashboard.html) — open it directly in a browser, no server or
 build step needed. It's also published as a Claude artifact and kept up to date in
 place rather than re-published as a new link — ask in a Claude Code session with

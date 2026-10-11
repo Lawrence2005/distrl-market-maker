@@ -53,7 +53,7 @@ Online rollout loop (training/rollout.py:run_episode):
 
 Encoder input dispatch (training/rollout.py:get_encoder_input):
     HandcraftedEncoder: obs vector (18-dim) from env._get_obs()
-    CNNEncoder / AEEncoder: LOB snapshot (20-dim) from info["lob_snapshot"]
+    CNNEncoder / AEEncoder: LOB snapshot (20-dim) + 6 private features (26-dim total)
 """
 
 from __future__ import annotations

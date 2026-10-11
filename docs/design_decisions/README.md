@@ -20,9 +20,10 @@ with clear reasoning. Useful for write-up and interviews.
   params (sigma, A, k) in a zero-sum game.
 - **Why scoped out**: Requires implementing a second adversary agent in ABIDES
   that learns simultaneously — effectively a separate research project.
-  Spooner & Savani themselves note direct risk-sensitive RL is numerically
-  unstable. Our CVaR wrapper achieves robustness through a tractable
-  alternative mechanism.
+  Spooner & Savani note that risk-sensitive RL built on distributional or
+  exponential-utility objectives can suffer numerical instability (arXiv
+  2003.01820, §1.2). Our CVaR wrapper applies risk at policy selection; that is
+  our design choice, not a result of that paper.
 - **Our analog**: none currently in scope — the flash-crash stress test that
   served as a fixed-adversary robustness check was removed from the project
   (see git history) after its ABIDES-native shock mechanism proved

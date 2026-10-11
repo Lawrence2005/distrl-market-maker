@@ -139,7 +139,7 @@ def build_agent(
         from agents.qrdqn import QRDQNAgent
         return QRDQNAgent(
             **common,
-            n_quantiles = agent_cfg.get("n_quantiles", 200),
+            n_quantiles = agent_cfg.get("n_quantiles", 32),
             dueling     = agent_cfg.get("dueling", True),
             cvar_alpha  = alpha,
             kappa       = agent_cfg.get("kappa", 1.0),

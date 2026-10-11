@@ -56,15 +56,18 @@ Three snapshot encoders expose `encoder.encode(obs) -> torch.Tensor` and are use
 #### Encoder 2 — 1D CNN
 ```
 Conv1D(32,k=3) → ReLU → Conv1D(16,k=3) → ReLU → Linear(latent_dim)
-Input: (2K,) LOB depth snapshot | Output: 16–32 dims
+Input: (2K,) LOB depth snapshot, convolved | Output: latent_dim (16–32) market dims,
+       with the 6 private features (§2.2) concatenated on raw and unconvolved
+       → latent_dim + 6 total, exposed to the agent
 ```
-Engineering choice — no single paper explicitly proposes this. Motivated by Gašperov & Kostanjčar (2021) parallel SGU+LOB architecture showing learned feature extraction helps. **Kumar (2019) is NOT a source for CNN.**
+Engineering choice — no single paper explicitly proposes this. Motivated by Gašperov & Kostanjčar (2021) parallel SGU+LOB architecture showing learned feature extraction helps. **Kumar (2019) is NOT a source for CNN.** Until it was fixed, this encoder (and the AE encoder below) never saw the private features at all — the agent was blind to its own inventory, quote distances, and time remaining. See `encoders/base.py::PRIVATE_FEATURE_DIM`.
 
 #### Encoder 3 — Autoencoder (AE)
 ```
 Same Conv1D stack; decoder mirrors encoder
-Pre-training: unsupervised MSE on LOBSTER snapshots (offline)
-Output: 8–32 dims (latent_dim ablated) | Frozen after pre-training
+Pre-training: unsupervised MSE on LOBSTER snapshots (offline), market features only
+Output: 8–32 market dims (latent_dim ablated) | Frozen after pre-training
+        + 6 private features concatenated on raw, as in Encoder 2
 ```
 Directly motivated by Gašperov survey (2021) which explicitly lists autoencoders as promising.
 
@@ -123,56 +126,51 @@ not a documented design choice, a bug.
 
 ## 4. Reward Functions
 
-### A — Asymmetric dampened (PRIMARY)
-```
-r_t = η · spread_PnL_t − (1−η) · |Δq_t|
-η = 0.5 (default); sweep {0.3, 0.5, 0.7}
-```
-Disincentivises trend-following. Source: Spooner et al. (2018).
+Per-step reward is computed in `envs/lob_env.py::_compute_reward`. The
+asymmetric reward (A) is this project's own formulation and the primary reward
+for every reported experiment.
 
-### B — Sparse liquidity reward
+**Per-step quantities**
 ```
-r_t = +1.0  if both sides fill
-    = −0.5  if |q_t| > 0.8·Q_max
+ψ_a     = matched_ask · (ask_price − mid)     # ask half-spread capture
+ψ_b     = matched_bid · (mid − bid_price)     # bid half-spread capture
+inv_pnl = q_prev · (mid − prev_mid)           # mark-to-market inventory PnL
+PnL     = ψ_a + ψ_b + inv_pnl
+```
+`q_prev` is the inventory before this step's fills. Shares that transacted this
+step are already compensated through ψ_a / ψ_b at their fill price.
+
+### A — Asymmetric adverse-inventory penalty (PRIMARY, this project's formulation)
+```
+r_t = PnL_t − η · max(0, −inv_pnl_t)
+η = 0.5 (default); ablation {0.1, 0.5, 1.0}
+```
+Only inventory losses are penalised, with weight η. Inventory gains count in full.
+
+*Sign-sensitivity ablation.* The reverse-sign variant (config `reward=asymmetric_spooner`)
+computes `PnL − η · max(0, inv_pnl)`, which penalises inventory gains and leaves
+losses unpenalised. It is run only to test whether results depend on the sign
+(`scripts/run_reward_comparison_eval.py`). It is not the project's reward and is not
+a replication of any published reward.
+
+### B — Sparse liquidity reward (ablation)
+```
+r_t = +1.0  if both sides fill this step (round-trip)
+    = −0.5  if a fill crosses the spread (adverse selection)
     =  0.0  otherwise
 ```
-Source: Sun et al. (2022).
+Source: not yet verified against the paper (see `paper/literature_claims.md`, row 24).
+
+### C — Quadratic inventory penalty (ablation)
+```
+r_t = PnL_t − λ · q_prev²        λ = 0.1 (default)
+```
 
 ### Terminal (all formulations)
 ```
-r_terminal = −κ · |q_T| · σ_T   (κ=1.0)
+r_terminal = −κ · |q_T| · σ_T   (κ = 1.0), added at episode end
 ```
-
-**As actually implemented** (`envs/lob_env.py::_compute_reward`, audited and
-corrected for a mark-to-market bug this session — see git history): this
-spec's formulas don't match the code, not a notational variance.
-
-```
-ψ_a = matched_ask · (ask_price − mid)        # ask half-spread capture
-ψ_b = matched_bid · (mid − bid_price)        # bid half-spread capture
-inv_pnl = q_prev · (mid − prev_mid)          # q_prev = inventory BEFORE this
-                                              # step's fills, not after —
-                                              # shares that just transacted
-                                              # are already compensated via
-                                              # ψ_a/ψ_b at their fill price
-PnL = ψ_a + ψ_b + inv_pnl
-
-asymmetric:  r_t = PnL − η · max(0, −inv_pnl)     # penalizes adverse
-                                                   # inventory PnL only, not
-                                                   # |Δq_t| turnover
-quadratic:   r_t = PnL − λ · q_prev²              # a third formulation not
-                                                   # listed above at all
-                                                   # (reward=quadratic)
-sparse:      r_t = +1.0  if both sides filled this step (round-trip)
-                 = −0.5  if a fill crossed the spread (adverse selection),
-                          NOT the |q_t| > 0.8·Q_max condition listed above
-                 =  0.0  otherwise
-```
-
-Reconcile this section with the code (or vice versa) before citing either
-in a write-up — right now they disagree on what "PnL" even means (spread
-capture alone vs. spread capture + mark-to-market) as well as on the exact
-penalty terms for two of the three reward types.
+Implemented in `envs/lob_env.py::_terminal_reward`.
 
 ---
 
@@ -182,7 +180,7 @@ penalty terms for two of the three reward types.
 
 **QR-DQN** (Dabney et al. 2018):
 ```
-Z_θ(s,a) = (1/N)·Σ δ_{θ_i(s,a)},  N=200
+Z_θ(s,a) = (1/N)·Σ δ_{θ_i(s,a)},  N=32 (all reported runs; Dabney et al. 2018 use N=200 on Atari)
 Loss: ρ_τ(u) = |τ − 1{u<0}|·L_κ(u),  τ_i=(2i−1)/(2N)
 Architecture: dueling network + prioritised replay
 ```
@@ -209,7 +207,7 @@ IQN:    action = argmax_a mean(Z(s,a,τ) for τ~U([0,α]))
 
 ```
 Simulator:     ABIDES-Gym
-Length:        3900 steps (one trading day)
+Length:        390 steps (one 6.5 h trading day at one step per minute)
 Inventory:     |q_t| ≤ Q_max = 1000 shares (order_size = 100 shares/order, ~10 orders' worth)
 Background:    50 noise traders, 10 momentum, 5 informed
 
@@ -227,11 +225,7 @@ r = s − q·γ·σ²·(T−t)
 ```
 Three violated assumptions: (1) driftless BM, (2) fill intensity depends only on δ, (3) arrivals and price independent.
 
-**GLFT (Guéant et al. 2012) — primary benchmark:**
-```
-FOIC: linearised closed-form  →  baselines/glft.py::GLFT_FOIC
-LIIC: bid = mid − δ*/2 − k·q  →  baselines/glft.py::GLFT_LIIC
-```
+**GLFT (Guéant et al. 2012) — primary benchmark:** exact ODE solution (Prop. 5), `baselines/glft.py::GLFTBaseline`.
 RL must beat GLFT to justify added complexity. Same benchmark as Gašperov & Kostanjčar (2021) — results directly comparable.
 
 ---
@@ -253,7 +247,7 @@ megashock mechanism proved numerically unstable during calibration.)
 
 ## 9. Scoped Out
 
-**Macro/micro hierarchical agent (Patel 2018):** Patel's own results show multi-agent underperforms micro-only. Recurrent integration (LSTM inside DQN/QR-DQN/IQN) subsumes the temporal LOB awareness of the micro-agent without coordination overhead.
+**Macro/micro hierarchical agent (Patel 2018):** Patel's own results show the multi-agent approach underperforms its macro-agent alone (arXiv 1812.10252, Fig. 12). Recurrent integration (LSTM inside DQN/QR-DQN/IQN) subsumes the temporal LOB awareness of the micro-agent without coordination overhead.
 
 **Adversarial RL (Spooner & Savani 2020):** Requires co-evolving adversary in ABIDES — a separate research project. CVaR achieves robustness tractably. No fixed-adversary robustness check is currently in scope (the flash-crash stress test that served this role was removed — see §8).
 
@@ -264,9 +258,9 @@ megashock mechanism proved numerically unstable during calibration.)
 | Citation | Role |
 |----------|------|
 | Avellaneda & Stoikov (2008) | AS baseline |
-| Guéant et al. (2012) | GLFT baseline — FOIC/LIIC |
+| Guéant et al. (2012) | GLFT baseline |
 | Huang et al. (2015) | Queue imbalance feature |
-| Spooner et al. (2018) | State features; asymmetric reward η; SARSA>Q-learning |
+| Spooner et al. (2018) | State features; eligibility-trace SARSA / Q-learning lineage |
 | Beysolow II | RL motivation |
 | Ganesh et al. JPMorgan (2019) | Risk-Averse |
 | Gašperov et al. survey (2021) | RL motivation; autoencoders explicitly listed |

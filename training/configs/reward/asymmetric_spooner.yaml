@@ -1,0 +1,9 @@
+# configs/reward/asymmetric_spooner.yaml
+# Reverse-sign ablation of our asymmetric reward:
+#   r = PnL - eta * max(0, inventory_pnl)
+# Penalises inventory GAINS and leaves losses unpenalised. Used only to test
+# sensitivity to the sign of our reward (scripts/run_reward_sign_check.py).
+# It is NOT the project's reward; see docs/mdp_formulation.md §4A.
+
+reward_type: asymmetric_spooner
+eta: 0.5

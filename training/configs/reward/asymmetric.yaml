@@ -1,7 +1,8 @@
 # configs/reward/asymmetric.yaml
-# Avellaneda-Stoikov flavour reward:
-#   r = PnL - eta * max(0, inventory_pnl)
-# Penalises adverse inventory PnL only.
+# Our asymmetric reward (the project's primary reward):
+#   r = PnL - eta * max(0, -inventory_pnl)
+# Penalises adverse inventory PnL with weight eta; gains count in full.
+# See docs/mdp_formulation.md §4A.
 
 reward_type: asymmetric
-eta: 0.5      # inventory dampening — ablate: 0.1, 0.5, 1.0
+eta: 0.5      # adverse-inventory penalty weight — ablate: 0.1, 0.5, 1.0
