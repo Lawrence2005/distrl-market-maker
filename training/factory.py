@@ -15,7 +15,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from agents.base import AgentBase
 from encoders.base import BaseEncoder
-from envs.lob_env import LOBMarketMakingEnv
+from envs.lob_env import LOBMarketMakingEnv, MarketDataConfig
 
 _REGIME_CONFIG_DIR = Path(__file__).resolve().parent / "configs" / "env" / "regime"
 
@@ -249,6 +249,7 @@ def build_env(env_cfg: DictConfig, reward_cfg: DictConfig, seed: int) -> LOBMark
         seed         = seed,
         use_abides   = use_abides,
         background_config_extra_kvargs = dict(env_cfg.get("abides_overrides", {}) or {}),
+        market_data  = MarketDataConfig(**dict(env_cfg.get("market_data", {}) or {})),
     )
 
     # sigma_override below only takes effect through LOBMarketMakingEnv's

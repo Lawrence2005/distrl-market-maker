@@ -24,6 +24,10 @@ python training/train.py agent=qrdqn encoder=autoencoder reward=asymmetric alpha
 ## Configs
 See `training/configs/` — one YAML per component (agent, encoder, env, reward).
 
+`env/base.yaml`'s `market_data:` block (buffer length, L2 subscription rate,
+decision cadence, recording) is documented in `envs/README.md`; its defaults
+reproduce ABIDES-Gym's own behaviour.
+
 ## Long/unattended runs: progress and resuming
 
 Every run writes `logs/<run_tag>/status.json`, updated after every episode,

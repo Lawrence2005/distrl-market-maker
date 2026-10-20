@@ -16,6 +16,18 @@ seed: 42
 
 use_abides: true
 
+# Market-data granularity (envs/lob_env.py::MarketDataConfig). These defaults
+# are ABIDES-Gym's own, so leaving the block alone changes nothing about the
+# policy's observations or any trained/evaluated result. `record: true`
+# additionally exposes every L2 snapshot and timestamped fill in `info`, for
+# envs/fine_grained.py (scripts/collect_fine_grained.py sets it). Override
+# from the CLI, e.g. env.market_data.record=true.
+market_data:
+  buffer_length: 5            # L2 snapshots the policy-side agent retains
+  subscribe_freq_ns: 100000000  # min gap between exchange L2 pushes (0.1 s)
+  timestep_duration: null     # decision cadence; null = ABIDES default "60s"
+  record: false
+
 # NOTE: this project's own synthetic-LOBSTER generator and the Hawkes-process
 # background-agent calibration it fed were archived (see archive/
 # lobster_calibration/, archive/hawkes/, and CLAUDE.md's Data section) — the

@@ -12,6 +12,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from collections import deque
+from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any
 import warnings
 import yaml
@@ -40,8 +41,11 @@ _install_pomegranate_compat_shim()
 
 try:
     from abides_gym.envs.markets_execution_environment_v0 import SubGymMarketsExecutionEnv_v0
+    from abides_gym.experimental_agents.core_gym_agent import CoreGymAgent
+    from abides_gym.experimental_agents.financial_gym_agent import FinancialGymAgent
 except ImportError:
     SubGymMarketsExecutionEnv_v0 = None
+    CoreGymAgent = FinancialGymAgent = None
 
 # Action space: bid/ask offsets in ticks
 # δ ∈ {0, 10, 20, ..., 100} → 11 levels per side → 121 total.
@@ -73,6 +77,166 @@ _ABIDES_FALLBACK_WARNED = False
 # real book was. Must match encoder/cnn.yaml's n_levels and
 # training/rollout.py's get_encoder_input()'s hardcoded n_levels, both 10.
 RAW_SNAPSHOT_LEVELS = 10
+
+
+@dataclass(frozen=True)
+class MarketDataConfig:
+    """
+    How much market data the ABIDES gym agent receives and keeps, and
+    whether LOBMarketMakingEnv.step()/reset() expose it in `info`.
+
+    The defaults are ABIDES-Gym's own, so an env built without this config
+    behaves exactly as before — nothing here changes what the policy
+    observes. Only `record=True` adds keys to `info` (see
+    LOBMarketMakingEnv), for envs/fine_grained.py's FineGrainedRecorder.
+
+    buffer_length     : L2 snapshots the gym agent retains for *the policy*
+        (ABIDES `market_data_buffer_length`; a deque that is not cleared
+        per step). The policy only ever reads the latest one. ABIDES
+        deep-copies this buffer several times per step, so large values
+        slow every step roughly linearly (measured: ~10x at 300) — don't
+        raise it for recording, which doesn't use it (see `record`).
+    subscribe_freq_ns : minimum gap between the exchange's L2 pushes to the
+        agent (ABIDES `subscribe_freq`, default 1e8 ns = 0.1 s). Pushes are
+        event-driven — only sent when the book changes — so this is a rate
+        cap, not a sampling clock; in rmsc04 snapshots arrive every few
+        seconds, not every 0.1 s.
+    timestep_duration : time between gym-agent wakeups, an ABIDES duration
+        string such as "60s" (None keeps ABIDES's own "60s" default). This
+        is the *decision* cadence: changing it changes the MDP, and
+        `episode_len` (steps) must be rescaled to match.
+    record            : expose every L2 snapshot and timestamped fill in
+        `info`. Swaps in RecordingGymAgent, which logs both in its own
+        append-only lists (independent of `buffer_length`, no per-step
+        copying), so recording leaves the simulation and the policy's
+        observations untouched.
+    """
+    buffer_length:     int           = 5
+    subscribe_freq_ns: int           = 100_000_000
+    timestep_duration: Optional[str] = None
+    record:            bool          = False
+
+    def __post_init__(self) -> None:
+        if self.buffer_length < 1:
+            raise ValueError(f"buffer_length must be >= 1, got {self.buffer_length}")
+        if self.subscribe_freq_ns < 1:
+            raise ValueError(
+                f"subscribe_freq_ns must be >= 1, got {self.subscribe_freq_ns}"
+            )
+
+
+def mid_from_book(bids, asks, last_transaction) -> float:
+    """
+    Mid-price in dollars from one L2 snapshot, in ABIDES cent units.
+
+    bids/asks are lists of (price, volume) tuples, best-first;
+    `last_transaction` stands in for a side with no resting orders.
+
+    Module-level so the env's per-step mid and envs/fine_grained.py's
+    per-snapshot mid are the same computation by construction.
+    """
+    best_bid = bids[0][0] if len(bids) > 0 else last_transaction
+    best_ask = asks[0][0] if len(asks) > 0 else last_transaction
+
+    return 0.5 * (best_bid + best_ask) / 100.0
+
+
+def book_features(
+    snap: Optional[dict], tick_size: float, n_lob_levels: int,
+) -> Tuple[float, float, np.ndarray, np.ndarray]:
+    """
+    The four order-book-derived entries of the handcrafted observation,
+    from one `lob_snapshot` dict (see parse_abides_raw_state):
+
+        spread      obs[0]       (best_ask − best_bid)/tick/10, clipped [0, 10]
+        imbalance   obs[2]       (V_b − V_a)/(V_b + V_a) over all snapshot
+                                 levels, clipped [−1, 1]
+        bid_depths  obs[6 : 6+K] L1..LK sizes, per-side normalised to sum 1
+        ask_depths  obs[6+K :]   same, ask side
+
+    All zeros when `snap` is None (no book seen yet). Module-level so
+    LOBMarketMakingEnv._get_obs and envs/fine_grained.py's per-second
+    feature frame compute these identically (see _get_obs for the full
+    index layout and the per-side-normalisation rationale).
+    """
+    bid_depths = np.zeros(n_lob_levels, dtype=np.float32)
+    ask_depths = np.zeros(n_lob_levels, dtype=np.float32)
+    if not snap:
+        return 0.0, 0.0, bid_depths, ask_depths
+
+    # Spread normalised by tick_size, clipped [0, 10]
+    raw_spread = 0.0
+    bid_prices, ask_prices = snap["bid_prices"], snap["ask_prices"]
+    if len(bid_prices) > 0 and len(ask_prices) > 0:
+        raw_spread = (ask_prices[0] - bid_prices[0]) / tick_size
+    spread = float(np.clip(raw_spread / 10.0, 0.0, 10.0))
+
+    # Queue imbalance I = (V_b − V_a) / (V_b + V_a)
+    bid_vol   = float(np.sum(snap.get("bid_sizes", [0])))
+    ask_vol   = float(np.sum(snap.get("ask_sizes", [0])))
+    total_vol = bid_vol + ask_vol
+    imbalance = (bid_vol - ask_vol) / total_vol if total_vol > 0 else 0.0
+    imbalance = float(np.clip(imbalance, -1.0, 1.0))
+
+    bid_depths = np.asarray(
+        snap.get("bid_sizes", [0] * n_lob_levels), dtype=np.float32
+    )[:n_lob_levels]
+    ask_depths = np.asarray(
+        snap.get("ask_sizes", [0] * n_lob_levels), dtype=np.float32
+    )[:n_lob_levels]
+
+    # Pad to n_lob_levels if snapshot has fewer levels
+    if len(bid_depths) < n_lob_levels:
+        bid_depths = np.pad(bid_depths, (0, n_lob_levels - len(bid_depths)))
+    if len(ask_depths) < n_lob_levels:
+        ask_depths = np.pad(ask_depths, (0, n_lob_levels - len(ask_depths)))
+
+    # Per-side normalisation: proportions within each side sum to 1
+    bid_total  = bid_depths.sum() + 1e-8
+    ask_total  = ask_depths.sum() + 1e-8
+    return spread, imbalance, bid_depths / bid_total, ask_depths / ask_total
+
+
+def format_book_events(parsed_mkt_data, n_levels: int = RAW_SNAPSHOT_LEVELS) -> list:
+    """
+    Plain-dict form of gym-agent L2 snapshots (its `parsed_mkt_data`
+    entries: bids/asks in ABIDES cents, last_transaction, exchange_ts),
+    oldest first:
+
+        {"ts", "mid", "last_transaction",
+         "bid_prices", "bid_sizes", "ask_prices", "ask_sizes"}   (dollars)
+    """
+    events = []
+    for mkt in parsed_mkt_data:
+        bids, asks = mkt["bids"], mkt["asks"]
+        events.append({
+            "ts":               int(mkt["exchange_ts"]),
+            "mid":              mid_from_book(bids, asks, mkt["last_transaction"]),
+            "last_transaction": mkt["last_transaction"] / 100.0,
+            "bid_prices": [b[0] / 100.0 for b in bids[:n_levels]],
+            "bid_sizes":  [b[1]         for b in bids[:n_levels]],
+            "ask_prices": [a[0] / 100.0 for a in asks[:n_levels]],
+            "ask_sizes":  [a[1]         for a in asks[:n_levels]],
+        })
+    return events
+
+
+def format_volume_events(parsed_volume_data) -> list:
+    """
+    Plain-dict form of gym-agent transacted-volume pushes (its
+    `parsed_volume_data` entries), oldest first:
+
+        {"ts", "bid_volume", "ask_volume"}
+
+    The volumes are market-wide totals over a *trailing lookback* window
+    (the agent's `lookback_period`, 60 s by default), re-sent whenever
+    trades occur — rolling totals, not per-interval increments.
+    """
+    return [
+        {"ts": int(v["exchange_ts"]), "bid_volume": v["bid_volume"],
+         "ask_volume": v["ask_volume"]}
+        for v in parsed_volume_data
+    ]
 
 
 def parse_abides_raw_state(raw_state: dict, n_lob_levels: int) -> dict:
@@ -167,7 +331,11 @@ def compute_realized_vol(price_history, window: int = 20) -> float:
     return float(np.std(log_ret))
 
 
-def build_abides_env(use_abides: bool, background_config_extra_kvargs: dict | None = None):
+def build_abides_env(
+    use_abides: bool,
+    background_config_extra_kvargs: dict | None = None,
+    market_data: MarketDataConfig | None = None,
+):
     """
     Creates ABIDES env when available, else fall back to synthetic mode.
 
@@ -178,6 +346,9 @@ def build_abides_env(use_abides: bool, background_config_extra_kvargs: dict | No
     Previously regimes only touched _gbm_step()'s synthetic-fallback path,
     which never runs when use_abides=True — every regime comparison was
     silently comparing identical real-ABIDES dynamics with different seeds.
+
+    market_data sets the gym agent's market-data subscription/buffer and
+    decision cadence (see MarketDataConfig; None = ABIDES-Gym's defaults).
     """
     global _ABIDES_FALLBACK_WARNED
 
@@ -197,6 +368,7 @@ def build_abides_env(use_abides: bool, background_config_extra_kvargs: dict | No
     return AbidesMarketMakingEnv(
         background_config="rmsc04",
         background_config_extra_kvargs=background_config_extra_kvargs or {},
+        market_data=market_data,
     )
 
 class LOBMarketMakingEnv(gym.Env):
@@ -227,6 +399,18 @@ class LOBMarketMakingEnv(gym.Env):
         how regime overlays actually vary the simulated market (fund_vol,
         megashock_* for a stress regime), not the (fallback-only)
         sigma_override/_gbm_step mechanism below
+    market_data : MarketDataConfig | None — market-data granularity and
+        whether raw book events/fills are exposed in `info` (None =
+        ABIDES-Gym's defaults, no extra `info` keys). When `record` is set,
+        reset()/step() `info` additionally carries:
+            book_events   — L2 snapshots published since the last call
+                            (format_book_events() dicts)
+            volume_events — transacted-volume pushes since the last call
+                            (format_volume_events() dicts)
+            fill_events   — own fills since the last call, as
+                            (ts_ns, "BID"|"ASK", qty, price_cents)
+            decision_ts   — simulation time of this decision, ns
+            mkt_open_ts   — simulation time of the market open, ns
 
     Usage
     -----
@@ -265,10 +449,14 @@ class LOBMarketMakingEnv(gym.Env):
         use_abides: bool = True,
         order_size: int = 100,
         background_config_extra_kvargs: dict | None = None,
+        market_data: MarketDataConfig | None = None,
     ):
         super().__init__()
 
-        self._abides_env = build_abides_env(use_abides, background_config_extra_kvargs)
+        self.market_data = market_data or MarketDataConfig()
+        self._abides_env = build_abides_env(
+            use_abides, background_config_extra_kvargs, self.market_data,
+        )
 
         cfg = {}
         if config is not None:
@@ -331,6 +519,12 @@ class LOBMarketMakingEnv(gym.Env):
         self._outstanding_bid = 0.0
         self._outstanding_ask = 0.0
 
+        # Cursors into the gym agent's append-only buffers, so each step only
+        # reports what is new (market_data.record; see _fine_grained_info)
+        self._book_cursor     = 0
+        self._volume_cursor   = 0
+        self._fill_cursor     = 0
+
         # Capped rolling histories (avoid unbounded memory growth)
         self._price_history:  deque = deque(maxlen=_PRICE_HISTORY_MAXLEN)
         self._volume_history: deque = deque(maxlen=_VOLUME_HISTORY_MAXLEN)
@@ -347,6 +541,32 @@ class LOBMarketMakingEnv(gym.Env):
     def _compute_realized_vol(self, window: int = 20) -> float:
         """Realized vol (std of log-returns). See module-level compute_realized_vol()."""
         return compute_realized_vol(self._price_history, window)
+
+    def _fine_grained_info(self, raw_state: dict) -> dict:
+        """
+        Extra `info` entries for market_data.record (empty dict otherwise,
+        so default `info` is unchanged). Advances the log cursors so every
+        snapshot and fill is reported exactly once per episode.
+        """
+        if not (self.market_data.record and self._abides_env is not None):
+            return {}
+
+        agent  = self._abides_env.gym_agent
+        book   = agent.book_log[self._book_cursor:]
+        volume = agent.volume_log[self._volume_cursor:]
+        fills  = agent.fill_log[self._fill_cursor:]
+        self._book_cursor   += len(book)
+        self._volume_cursor += len(volume)
+        self._fill_cursor   += len(fills)
+
+        internal = raw_state["internal_data"]
+        return {
+            "book_events":   format_book_events(book),
+            "volume_events": format_volume_events(volume),
+            "fill_events":   fills,
+            "decision_ts":   int(internal["current_time"]),
+            "mkt_open_ts":   int(internal["mkt_open"]),
+        }
 
     # ------------------------------------------------------------------
     # Observation
@@ -383,19 +603,16 @@ class LOBMarketMakingEnv(gym.Env):
 
         # ── Market features ───────────────────────────────────────────
 
+        # Order-book-derived entries [0], [2], [6 : 6+2K] — see book_features()
+        # for the definitions (shared with envs/fine_grained.py).
+        last_snap = self._lob_history[-1] if self._lob_history else None
+        spread, imbalance, bid_depths, ask_depths = book_features(
+            last_snap, self.tick_size, self.n_lob_levels,
+        )
+
         # [0] Bid-ask spread normalised by tick_size, clipped [0, 10]
         #     Uses outstanding quotes as best-bid/ask proxy.
-        raw_spread = 0.0
-        if self._lob_history:
-            snap = self._lob_history[-1]
-
-            bid_prices, ask_prices = snap["bid_prices"], snap["ask_prices"]
-
-            if len(bid_prices) > 0 and len(ask_prices) > 0:
-                best_bid, best_ask = bid_prices[0], ask_prices[0]
-
-                raw_spread = (best_ask - best_bid) / self.tick_size
-        obs[0] = float(np.clip(raw_spread / 10.0, 0.0, 10.0))
+        obs[0] = spread
 
         # [1] Mid-price log-return this step, scaled by tick_size, clipped ±10
         log_ret = 0.0
@@ -405,14 +622,7 @@ class LOBMarketMakingEnv(gym.Env):
 
         # [2] Queue imbalance I = (V_b − V_a) / (V_b + V_a)
         #     Populated from _lob_history once ABIDES is wired in.
-        imbalance = 0.0
-        if self._lob_history:
-            snap      = self._lob_history[-1]
-            bid_vol   = float(np.sum(snap.get("bid_sizes", [0])))
-            ask_vol   = float(np.sum(snap.get("ask_sizes", [0])))
-            total_vol = bid_vol + ask_vol
-            imbalance = (bid_vol - ask_vol) / total_vol if total_vol > 0 else 0.0
-        obs[2] = float(np.clip(imbalance, -1.0, 1.0))
+        obs[2] = imbalance
 
         # [3] Signed volume normalised by rolling max, clipped ±1
         obs[3] = 0.0
@@ -435,29 +645,6 @@ class LOBMarketMakingEnv(gym.Env):
         # Normalised per-side so proportions across levels sum to 1.
         # (Per-side normalisation is standard in LOB ML literature;
         #  cross-side normalisation conflates bid and ask liquidity.)
-        bid_depths = np.zeros(self.n_lob_levels, dtype=np.float32)
-        ask_depths = np.zeros(self.n_lob_levels, dtype=np.float32)
-        if self._lob_history:
-            snap       = self._lob_history[-1]
-            bid_depths = np.asarray(
-                snap.get("bid_sizes", [0] * self.n_lob_levels), dtype=np.float32
-            )[:self.n_lob_levels]
-            ask_depths = np.asarray(
-                snap.get("ask_sizes", [0] * self.n_lob_levels), dtype=np.float32
-            )[:self.n_lob_levels]
-
-            # Pad to n_lob_levels if snapshot has fewer levels
-            if len(bid_depths) < self.n_lob_levels:
-                bid_depths = np.pad(bid_depths, (0, self.n_lob_levels - len(bid_depths)))
-            if len(ask_depths) < self.n_lob_levels:
-                ask_depths = np.pad(ask_depths, (0, self.n_lob_levels - len(ask_depths)))
-
-            # Per-side normalisation: proportions within each side sum to 1
-            bid_total  = bid_depths.sum() + 1e-8
-            ask_total  = ask_depths.sum() + 1e-8
-            bid_depths = bid_depths / bid_total
-            ask_depths = ask_depths / ask_total
-
         obs[6 : 6 + self.n_lob_levels]                          = bid_depths
         obs[6 + self.n_lob_levels : 6 + 2 * self.n_lob_levels] = ask_depths
 
@@ -693,6 +880,8 @@ class LOBMarketMakingEnv(gym.Env):
             "cash":         self._cash,
             "lob_snapshot": parsed["lob_snapshot"] if self._abides_env is not None else {},
         }
+        if self._abides_env is not None:
+            info.update(self._fine_grained_info(raw_state))
         return obs, info
 
     def step(self, action):
@@ -802,6 +991,8 @@ class LOBMarketMakingEnv(gym.Env):
                     else 0.0
                 )
         }
+        if self._abides_env is not None:
+            info.update(self._fine_grained_info(raw_state))
         return obs, reward, terminated, truncated, info
 
     # ------------------------------------------------------------------
@@ -858,15 +1049,8 @@ class LOBMarketMakingEnv(gym.Env):
         raw_state["parsed_mkt_data"]["bids"] is a list of (price, volume) tuples,
         best-first. "last_transaction" is the scalar fallback when book is empty.
         """
-        mkt      = raw_state["parsed_mkt_data"][-1]   # ← deque, take latest
-        bids             = mkt["bids"]
-        asks             = mkt["asks"]
-        last_transaction = mkt["last_transaction"]
-
-        best_bid = bids[0][0] if len(bids) > 0 else last_transaction
-        best_ask = asks[0][0] if len(asks) > 0 else last_transaction
-
-        return 0.5 * (best_bid + best_ask) / 100.0
+        mkt = raw_state["parsed_mkt_data"][-1]   # ← deque, take latest
+        return mid_from_book(mkt["bids"], mkt["asks"], mkt["last_transaction"])
 
     def _encode_abides_action(self, bid_price: float, ask_price: float) -> int:
         """
@@ -899,11 +1083,68 @@ if SubGymMarketsExecutionEnv_v0 is None:
                 "AbidesMarketMakingEnv."
             )
 else:
+    class RecordingGymAgent(FinancialGymAgent, CoreGymAgent):
+        """
+        FinancialGymAgent that keeps append-only, timestamped logs of every
+        L2 snapshot it receives and every fill — ABIDES itself keeps only
+        the last `market_data_buffer_length` snapshots, and fills since the
+        last wakeup with no execution time, which can't resolve *when*
+        inside a decision interval anything happened.
+
+        book_log   : parsed L2 snapshots (the `parsed_mkt_data` dicts, which
+            carry exchange_ts), one per message the exchange pushed.
+        volume_log : parsed transacted-volume pushes (`parsed_volume_data`
+            dicts: trailing-lookback bid/ask volume), likewise.
+        fill_log   : (ts_ns, side "BID"|"ASK", quantity, price_cents).
+
+        Logging is by reference (no copying) and independent of the
+        policy-visible buffer. A fresh agent is built every reset(), so the
+        logs are per-episode.
+
+        CoreGymAgent is listed as a direct base (as FinancialGymAgent itself
+        does) on purpose: the ABIDES kernel finds its gym agent by checking
+        the *direct* bases' names, so a subclass that only names
+        FinancialGymAgent isn't recognised and the kernel returns no
+        final state at market close (step 390 raises on a None raw_state).
+        """
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.book_log: list = []
+            self.volume_log: list = []
+            self.fill_log: list = []
+
+        def receive_message(self, current_time, sender_id, message) -> None:
+            super().receive_message(current_time, sender_id, message)
+            # The parent rebinds parsed_mkt_data / parsed_volume_data to a
+            # fresh dict per push, so a changed identity marks a new message.
+            if self.parsed_mkt_data and (
+                not self.book_log or self.parsed_mkt_data is not self.book_log[-1]
+            ):
+                self.book_log.append(self.parsed_mkt_data)
+            if self.parsed_volume_data and (
+                not self.volume_log or self.parsed_volume_data is not self.volume_log[-1]
+            ):
+                self.volume_log.append(self.parsed_volume_data)
+
+        def order_executed(self, order) -> None:
+            super().order_executed(order)
+            self.fill_log.append(
+                (int(self.current_time), order.side.value, order.quantity, order.fill_price)
+            )
+
     class AbidesMarketMakingEnv(SubGymMarketsExecutionEnv_v0):
         """Thin subclass that overrides action mapping for two-sided LMT quoting."""
 
-        def __init__(self, **kwargs):
+        def __init__(self, market_data: MarketDataConfig | None = None, **kwargs):
+            market_data = market_data or MarketDataConfig()
+            kwargs["market_data_buffer_length"] = market_data.buffer_length
+            if market_data.timestep_duration is not None:
+                kwargs["timestep_duration"] = market_data.timestep_duration
             super().__init__(**kwargs)
+            self.extra_gym_agent_kvargs["subscribe_freq"] = market_data.subscribe_freq_ns
+            if market_data.record:
+                self.gymAgentConstructor = RecordingGymAgent
             # Single dummy action token — we only ever pass 0
             self.action_space = gym.spaces.Discrete(1)
             self._pending_bid_price: int = 0  # cents
