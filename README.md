@@ -85,11 +85,10 @@ low_vol/normal/high_vol regimes, 15-episode held-out evaluation:
 - **Recurrent integration (Q4) never significantly helps and does not consistently
   compound with CVaR.** Across 10 snapshot-vs-recurrent pairs (QR-DQN in all 3
   regimes, DQN/IQN/PPO in `normal`, plus QR-DQN/`normal` across the CVaR alpha
-  sweep), the only 2 significant results both favor the snapshot policy
-  (QR-DQN and DQN, both `normal`, p<0.0001); the CVaR-alpha extension finds the
-  effect is alpha-dependent, not a stable interaction — recurrent significantly
-  *wins* at α=0.50 but significantly *loses* at α=0.10, reversing what
-  training-time eval numbers alone had suggested for that α. See the results doc's
+  sweep), 7 significant results all favor the snapshot policy (QR-DQN, DQN and IQN
+  in `normal`, and QR-DQN at every CVaR α tried: 0.05, 0.10, 0.50, 1.0); the other 3
+  show no significant difference. Recurrent integration does not compound with
+  CVaR — it is worse at every tail level. See the results doc's
   "Recurrent vs. snapshot" section for the full table.
 - **QR-DQN is the most robust out-of-distribution generalizer**: the only agent
   that stays profitable when a checkpoint trained in one regime is dropped into
@@ -97,11 +96,11 @@ low_vol/normal/high_vol regimes, 15-episode held-out evaluation:
   pairs tested — and in the 3 pairs that transfer *out of* high_vol, it doesn't
   just hold up, it improves on its own in-distribution Sharpe.
 - The CVaR alpha sweep does **not** trace the textbook risk-return efficient
-  frontier at this training budget — confirmed with a genuine 4-seed replication
-  (not just the original single seed per α): the single-seed version's apparent
-  non-monotonic pattern didn't survive real seed variance, and most α values turn
-  out to be statistically indistinguishable from each other. See the results doc
-  for the full multi-seed table.
+  frontier at this training budget (4 seeds per α): for IQN the risk-neutral limit
+  (α=1.0) has the highest mean P&L and the worst tail, as predicted, but for QR-DQN
+  mean P&L rises with α while the tail is best at interior values, so the more
+  conservative settings do not improve it, and seed variance is large relative to the
+  gaps between adjacent α. See the results doc for the full multi-seed table.
 - The live ABIDES-Gym simulator passes 4–5 of 5 stylized-facts checks in every
   regime under a random policy, but was calibrated against synthetic order flow,
   never real LOBSTER data (see "Future Work").

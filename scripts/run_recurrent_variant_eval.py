@@ -218,11 +218,25 @@ def main() -> None:
     p.add_argument("--n_episodes", type=int, default=15)
     p.add_argument("--skip", nargs="+", default=[],
                    help="Variant names to skip (e.g. --skip ppo_normal).")
+    p.add_argument("--only", nargs="+", default=None,
+                   help="Run just these variants and merge them into the existing "
+                        "output CSVs (other variants' rows are kept). The "
+                        "significance table is rebuilt for every variant.")
+    p.add_argument("--sig_only", action="store_true",
+                   help="Evaluate nothing; just rebuild the significance table "
+                        "from the existing holdout CSV (e.g. after the cvar-sweep "
+                        "baselines it compares against were re-run).")
     args = p.parse_args()
+    if args.sig_only:
+        args.only = []
 
-    variants_to_run = {k: v for k, v in RECURRENT_VARIANTS.items() if k not in args.skip}
+    variants_to_run = {k: v for k, v in RECURRENT_VARIANTS.items()
+                       if k not in args.skip and (args.only is None or k in args.only)}
     if args.skip:
         print(f"Skipping: {', '.join(args.skip)}")
+    if args.only is not None:
+        unknown = set(args.only) - set(RECURRENT_VARIANTS)
+        assert not unknown, f"unknown variants {sorted(unknown)}"
 
     holdout_seeds = [BASE_SEED + HOLDOUT_OFFSET + i for i in range(args.n_episodes)]
     print(f"Holdout seed block: {holdout_seeds[0]}..{holdout_seeds[-1]} "
@@ -246,15 +260,26 @@ def main() -> None:
 
     holdout_df = pd.DataFrame(all_rows)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    as_recovery_df = (pd.concat(as_recovery_frames, ignore_index=True)
+                      if as_recovery_frames else pd.DataFrame())
+    if args.only is not None:
+        # Partial run: keep every other variant's rows from the existing files
+        ran = set(variants_to_run)
+        old_h = pd.read_csv(OUT_DIR / "recurrent_variant_holdout.csv")
+        holdout_df = pd.concat([old_h[~old_h["variant"].isin(ran)], holdout_df],
+                               ignore_index=True)
+        old_a = pd.read_csv(OUT_DIR / "recurrent_variant_as_recovery.csv")
+        as_recovery_df = pd.concat([old_a[~old_a["variant"].isin(ran)], as_recovery_df],
+                                   ignore_index=True)
     holdout_df.to_csv(OUT_DIR / "recurrent_variant_holdout.csv", index=False)
-
-    if as_recovery_frames:
-        pd.concat(as_recovery_frames, ignore_index=True).to_csv(
-            OUT_DIR / "recurrent_variant_as_recovery.csv", index=False)
+    if not as_recovery_df.empty:
+        as_recovery_df.to_csv(OUT_DIR / "recurrent_variant_as_recovery.csv", index=False)
 
     # ── Significance test: each recurrent variant vs. its own non-recurrent
     # snapshot baseline (same agent, same regime), paired on shared seeds ──
-    for name, spec in variants_to_run.items():
+    for name, spec in RECURRENT_VARIANTS.items():
+        if name in args.skip:
+            continue
         variant_rows = holdout_df[holdout_df["variant"] == name].set_index("seed")["sharpe"]
         if variant_rows.empty:
             continue

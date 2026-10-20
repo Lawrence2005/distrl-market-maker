@@ -84,6 +84,10 @@ def load_agent(
     n_quantile_samples: int = 64,
     embedding_dim: int = 64,
     use_lstm:     bool = False,
+    # CVaR tail fraction for qrdqn/iqn action selection. None = restore the
+    # alpha the checkpoint was trained with (its saved config); the agents'
+    # constructor default (0.25) is only right for alpha=0.25 runs.
+    cvar_alpha:   Optional[float] = None,
     # SARSA tile-coding kwargs (must match training config — n_tilings and
     # memory_size determine the tile-hash range, not just array size, so a
     # mismatch here causes out-of-bounds indexing, not just wrong weights)
@@ -111,6 +115,9 @@ def load_agent(
     hidden_dim    : int — LSTM hidden size (default 128)
     n_quantiles   : int — QR-DQN quantile atoms (default 32)
     n_quantile_samples : int — IQN quantile samples (default 64)
+    cvar_alpha    : float — CVaR alpha for qrdqn/iqn (default: the checkpoint's
+        own trained alpha; before this was restored every checkpoint acted at
+        the constructor default 0.25, whatever alpha it was trained at)
     use_lstm      : bool — must match how the checkpoint was trained
         (train.py's variant=recurrent → True, variant=null/snapshot → False,
         the default here) — mismatching this raises a state_dict load error
@@ -172,6 +179,12 @@ def load_agent(
     ckpt = torch.load(str(checkpoint), map_location=device, weights_only=False)
     agent_state = ckpt.get("agent_state", ckpt)
 
+    if agent_type in ("qrdqn", "iqn"):
+        if cvar_alpha is None:
+            saved = ckpt.get("config", {}) or {}
+            cvar_alpha = float(saved.get("alpha",
+                               (saved.get("agent") or {}).get("cvar_alpha", 0.25)))
+
     if agent_type == "dqn":
         from agents.dqn import DQNAgent
         agent = DQNAgent(
@@ -188,6 +201,7 @@ def load_agent(
             encoder     = encoder,
             n_actions   = n_actions,
             n_quantiles = n_quantiles,
+            cvar_alpha  = cvar_alpha,
             hidden_dim  = hidden_dim,
             use_lstm    = use_lstm,
             device      = device,
@@ -199,6 +213,7 @@ def load_agent(
             encoder            = encoder,
             n_actions          = n_actions,
             n_quantile_samples = n_quantile_samples,
+            cvar_alpha         = cvar_alpha,
             embedding_dim      = embedding_dim,
             hidden_dim         = hidden_dim,
             use_lstm           = use_lstm,

@@ -191,45 +191,26 @@ calibration step that never happened, not a replacement for it.
 regime, 4 seeds per α: 42, 1042, 2042, 3042)** — the naive expectation is a smooth
 efficient frontier: lower α (more risk-averse) trades lower mean P&L for better
 tail protection (higher CVaR₀.₁₀), converging to a risk-neutral mean-maximizer at
-α=1.0. The first pass at this (single seed per α) found a non-monotonic,
-dominated-frontier result instead, and flagged seed-to-seed training variance as
-the likely cause rather than a real CVaR-alpha effect. **The 3 additional seeds
-per α confirm that suspicion: the single-seed pattern does not replicate.**
-(Numbers below are post-seed-bug-fix — see "Bugs found" for the holdout-seed
-block correction applied to this whole sweep; the finding is unchanged by the
-fix, and for IQN specifically the ranking shuffles *even further* on the
-corrected block, reinforcing rather than weakening the "mostly noise"
-conclusion.) For QR-DQN, α=0.25 dominates outright across all 4 seeds — best
-mean P&L (+1000 ± 309) *and* the only clearly positive CVaR₀.₁₀ (+445 ± 130) —
-while α=0.10, the single-seed run's tail-risk winner, is still the *worst* on
-tail risk of all five values (CVaR₀.₁₀ −1944 ± 2717 — a standard deviation wider
-than the mean itself). For IQN, the corrected seeds leave **no clear winner or
-loser at all**: α=0.50 and α=0.10 are now statistically tied for the best tail
-risk (−964 ± 1031 vs. −969 ± 557), and α=0.25 and α=1.0 are now tied for the
-worst (−2560 ± 938 vs. −2541 ± 1414) — a reshuffling from the pre-fix numbers,
-which had shown a single apparent best (α=0.50) and worst (α=1.0); mean P&L is
-similarly a near-tie across most alphas (α=0.25 and α=0.10 both ≈170, within a
-std of each other). The one finding that *does* survive multi-seed replication,
-now more strongly than before: at this training budget, CVaR-α does not produce
-a smooth, monotonic risk/return tradeoff for either agent, and for IQN even the
-*extremes* fail to clear their own noise band — only QR-DQN's α=0.25 win stands
-out as a genuinely distinct result. See `cvar_efficient_frontier.csv` (aggregate
-mean ± std across the 4 seeds) and `cvar_efficient_frontier_per_seed.csv`
-(per-seed points) for the full tables.
-
-**Encoder ablation (QR-DQN × {handcrafted, cnn, autoencoder, recurrent}, α=0.25,
-`normal` regime)** — a clean, statistically significant result: **handcrafted
-features beat every learned-representation alternative by a wide margin.**
-Held-out Sharpe: handcrafted +4.19, cnn +0.45, autoencoder −0.18, recurrent −0.39 —
-all three differences vs. handcrafted are significant at p<0.0001 (paired Wilcoxon,
-n=15). For this project's training budget and reward design, none of the
-alternative representations tried come close to the hand-engineered feature vector.
-A separate, interesting decoupling: **recurrent shows the strongest AS-recovery of
-any encoder** (GLFT R²=0.67, STRONG recovery) despite having the *worst* held-out
-Sharpe of the four — it learns AS/GLFT-consistent inventory-skew behavior more
-cleanly than handcrafted does, without that translating into better P&L. cnn shows
-essentially zero AS-recovery (R²≈0.00) and autoencoder shows WEAK recovery
-(R²=0.32) — no correlation between an encoder's AS-recovery and its Sharpe rank.
+α=1.0. The 4-seed result does not show that. **QR-DQN shows no return-for-tail
+trade at all:** mean P&L *rises* with α (+777 ± 511 at α=0.05, +675 ± 523 at 0.10,
++1000 ± 309 at 0.25, +1232 ± 567 at 0.50, +1845 ± 242 at α=1.0), while CVaR₀.₁₀ is
+best at the interior values (+550 ± 404 at α=0.50, +445 ± 130 at 0.25), still
+positive at the risk-neutral α=1.0 (+373 ± 532), and worst at the most
+conservative α=0.05 (−80 ± 217); mean Sharpe peaks at α=0.25 (3.89 ± 0.27). The
+most tail-averse setting is therefore not the best tail, and the risk-neutral one
+is not the worst. **IQN behaves the way the method predicts at one end only:**
+α=1.0 has both the highest mean P&L (+574 ± 891) and the most negative CVaR₀.₁₀
+(−2795 ± 2014), but α=0.05 has the lowest mean P&L (−45 ± 347) and a CVaR₀.₁₀ of
+−1745 ± 2003, worse than α=0.10 (−784 ± 748), so the conservative end does not buy
+the best tail; the interior values are noisy (std ≥ the gap to the neighbouring α
+throughout, e.g. α=0.25: +348 ± 942, CVaR₀.₁₀ −1559 ± 2297). Per-seed standard
+deviations are large relative to the differences between adjacent α for both
+agents, so the honest summary is: at this training budget and seed count CVaR-α
+does not produce a clean, monotonic return-versus-tail-risk frontier. See
+`cvar_efficient_frontier.csv` (aggregate mean ± std across the 4 seeds) and
+`cvar_efficient_frontier_per_seed.csv` (per-seed points) for the full tables.
+(The α≠0.25 rows were regenerated after `training/evaluate.py::load_agent` was
+fixed to restore each checkpoint's trained CVaR α — see "Bugs found".)
 
 ## Encoder ablation (DQN, PPO, IQN)
 
@@ -285,41 +266,55 @@ QR-DQN/`normal` again across the CVaR alpha sweep (0.05, 0.10, 0.50, 1.00 — 0.
 is the base `qrdqn_normal` row) to test whether the recurrent effect compounds
 with the CVaR objective.
 
-**Base 6: recurrent never significantly helps, and twice significantly hurts.**
-Only `qrdqn_normal` (+4.19 snapshot → +1.34 recurrent) and `dqn_normal`
-(+3.65 → +0.35) reach significance (paired Wilcoxon p<0.0001 each), both in the
-direction of recurrent being *worse*. The other 4 (`qrdqn_low_vol`,
-`qrdqn_high_vol`, `iqn_normal`, `ppo_normal`) show no significant difference
+**Base 6: recurrent never significantly helps, and three times significantly hurts.**
+`qrdqn_normal` (+4.19 snapshot → +1.34 recurrent), `dqn_normal` (+3.65 → +0.35) and
+`iqn_normal` (+0.01 → −0.63) reach significance (paired Wilcoxon p=0.0001, 0.0001
+and 0.041), all in the direction of recurrent being *worse*. The other 3
+(`qrdqn_low_vol`, `qrdqn_high_vol`, `ppo_normal`) show no significant difference
 either way.
 
-**CVaR-alpha extension: the effect is alpha-dependent, not a consistent
-interaction — and overturns the training-time read at α=0.10.** Training-time
-best-eval-Sharpe had suggested recurrent won at α=0.10 (1.878 vs. 1.805), but
-genuine held-out evaluation on identical market paths (after fixing the
-holdout-seed bug below) shows the opposite, significantly: recurrent **loses**
-at α=0.10 (+3.26 snapshot → +0.57 recurrent, paired Wilcoxon p=0.0001). α=0.50
-confirms a significant recurrent **win** (−0.93 → +2.29, p=0.0001). α=0.05 and
-α=1.00 show no significant difference either way. This is the clearest instance
-yet in this project of training-time numbers alone being actively misleading,
-not just noisy.
+**CVaR-alpha extension: recurrent QR-DQN is significantly worse at every α tried.**
+Evaluated at each checkpoint's own trained α, recurrent loses at α=0.05 (+1.56
+snapshot → −0.06 recurrent, p=0.018), α=0.10 (+2.37 → +0.42, p=0.005), α=0.50
+(+3.76 → +2.73, p=0.026) and α=1.00 (+3.11 → +0.84, p=0.0001). Overall, across the 10
+pairs, recurrent significantly helps in none and significantly hurts seven. Note
+that training-time best-eval-Sharpe had suggested recurrent won at α=0.10
+(1.878 vs. 1.805); genuine held-out evaluation on identical market paths shows
+the opposite.
 
 AS-recovery decouples from the Sharpe result throughout, same pattern as the
 encoder ablation: recurrent's GLFT R² is sometimes much higher than its snapshot
 counterpart (`qrdqn_low_vol`: 0.50→0.85 STRONG; `dqn_normal`: 0.16→0.45; the
-α=0.10 recurrent variant: 0.70, STRONG, despite losing on Sharpe) and sometimes
+α=0.10 recurrent variant: 0.72, STRONG, despite losing on Sharpe) and sometimes
 much lower (`qrdqn_normal`: 0.32→0.02; `qrdqn_high_vol`: 0.35→0.17; `iqn_normal`:
-0.45→0.13; the α=0.50 recurrent variant: 0.25, NO RECOVERY, despite winning on
-Sharpe) — no consistent direction, and no correlation with the Sharpe result.
+0.45→0.13; the α=1.00 recurrent variant: 0.01, NO RECOVERY) — no consistent
+direction, and no correlation with the Sharpe result.
 
 **Net finding:** for this project's training budget, an LSTM backbone doesn't
 reliably buy anything a snapshot encoder doesn't already provide, its effect on
-QR-DQN specifically is alpha-dependent rather than a stable interaction with the
-CVaR objective, and it risks measurably hurting QR-DQN and DQN in the `normal`
-regime at several (but not all) settings. See `recurrent_variant_holdout.csv`,
+QR-DQN specifically is negative at every CVaR α tested, and it measurably hurts
+QR-DQN, DQN and IQN in the `normal` regime. See `recurrent_variant_holdout.csv`,
 `recurrent_variant_significance.csv`, and `recurrent_variant_as_recovery.csv` for
 the full tables.
 
 ## Bugs found and fixed during this sweep
+
+**`load_agent` never restored a checkpoint's CVaR α — every post-hoc evaluation of an
+α≠0.25 QR-DQN/IQN checkpoint acted at α=0.25.** `training/evaluate.py::load_agent`
+built QR-DQN/IQN with the constructor default `cvar_alpha=0.25`; the trained α is
+stored only in the checkpoint's saved config, which it never read. Training and the
+evaluations run during training were unaffected (the training factory passes α), as
+were all α=0.25 results (reproduced bit-exactly after the fix). Affected: the α∈{0.05,
+0.10, 0.50, 1.0} rows of the CVaR sweep (holdout, AS-recovery, efficient frontier) and
+the four recurrent QR-DQN α variants. Confirmed by loading the α=0.05 checkpoint with
+α forced to 0.25 and reproducing the old holdout P&Ls to the digit. Fixed by restoring
+α from the checkpoint config (`load_agent(..., cvar_alpha=None)`; an explicit value
+overrides; regression test in `tests/test_load_agent_alpha.py`), then re-running the
+affected evaluations (`run_cvar_sweep_eval.py --alphas ... --out_suffix`, merged with
+`--merge_suffixes`; `run_recurrent_variant_eval.py --only ...`, then `--sig_only`).
+The corrected numbers change the sweep's picture (QR-DQN mean P&L now rises with α
+rather than peaking at 0.25; the recurrent-vs-snapshot α=0.50 "win" disappears and
+becomes a loss), so the sweep and recurrent sections above reflect the corrected data.
 
 **ABIDES real-market seeding never worked, at any point in this project's history**
 (caught while investigating an AS-recovery result that changed dramatically between

@@ -163,10 +163,22 @@ def main() -> None:
                          "parallel, one per agent, to halve wall time; "
                          "output CSVs get an --out_suffix to avoid clobbering "
                          "each other and are merged afterward.")
+    p.add_argument("--alphas", type=str, default=None,
+                    help="comma-separated subset of alphas to run (default: all). "
+                         "Use with --out_suffix, then --merge_suffixes, to re-run "
+                         "only some alphas without touching the rest.")
+    p.add_argument("--merge_suffixes", type=str, default=None,
+                    help="comma-separated --out_suffix values of finished partial "
+                         "runs (e.g. '_a,_b'): runs nothing, replaces those "
+                         "(agent, alpha) rows in the canonical cvar_sweep_holdout.csv"
+                         " / cvar_sweep_as_recovery.csv, then rebuilds the frontier.")
     p.add_argument("--out_suffix", type=str, default="",
                     help="appended to output CSV filenames, e.g. '_qrdqn'.")
     args = p.parse_args()
 
+    alphas = [float(a) for a in args.alphas.split(",")] if args.alphas else ALL_ALPHAS
+    for a in alphas:
+        assert a in ALL_ALPHAS, f"unknown alpha {a}, expected one of {ALL_ALPHAS}"
     agents = args.agents.split(",") if args.agents else AGENTS
     for a in agents:
         assert a in AGENTS, f"unknown agent {a!r}, expected one of {AGENTS}"
@@ -181,21 +193,25 @@ def main() -> None:
     holdout_seeds = [BASE_SEED + HOLDOUT_OFFSET + i for i in range(args.n_episodes)]
     print(f"Holdout seed block: {holdout_seeds[0]}..{holdout_seeds[-1]} "
           f"({args.n_episodes} episodes) x {len(SEEDS)} train seeds x "
-          f"{len(ALL_ALPHAS)} alphas x {len(agents)} agent(s) = "
-          f"{args.n_episodes * len(SEEDS) * len(ALL_ALPHAS) * len(agents)} holdout rollouts")
+          f"{len(alphas)} alphas x {len(agents)} agent(s) = "
+          f"{args.n_episodes * len(SEEDS) * len(alphas) * len(agents)} holdout rollouts")
+
+    if args.merge_suffixes:
+        merge_partials(args.merge_suffixes.split(","))
+        return
 
     all_rows = []
     as_recovery_frames = []
 
     for agent_type in agents:
-        for alpha in ALL_ALPHAS:
+        for alpha in alphas:
             for train_seed in SEEDS:
                 print(f"\n{'='*78}\nHOLDOUT EVAL — {agent_type} alpha={alpha:.2f} "
                       f"seed={train_seed}\n{'='*78}")
                 all_rows.extend(run_holdout_for_combo(agent_type, alpha, train_seed, holdout_seeds))
 
     for agent_type in agents:
-        for alpha in ALL_ALPHAS:
+        for alpha in alphas:
             for train_seed in SEEDS:
                 print(f"\n{'='*78}\nAS-RECOVERY — {agent_type} alpha={alpha:.2f} "
                       f"seed={train_seed}\n{'='*78}")
@@ -212,16 +228,37 @@ def main() -> None:
         as_recovery_df = pd.concat(as_recovery_frames, ignore_index=True)
         as_recovery_df.to_csv(OUT_DIR / f"cvar_sweep_as_recovery{args.out_suffix}.csv", index=False)
 
-    if args.out_suffix:
-        print(f"\nRan with --out_suffix={args.out_suffix!r} (partial agent subset "
-              f"{agents}) — skipping frontier computation here; merge the "
-              f"per-agent CSVs and build the frontier from the combined file.")
+    if args.out_suffix or args.alphas or args.agents:
+        print(f"\nPartial run (agents={agents}, alphas={alphas}) — skipping the frontier "
+              f"here; combine partial outputs with --merge_suffixes.")
         return
 
+    build_frontier(holdout_df)
+
+
+def merge_partials(suffixes: list[str]) -> None:
+    """Replace the (agent, alpha) rows covered by each partial run in the
+    canonical CSVs, then rebuild the frontier from the merged holdout file."""
+    for stem in ("cvar_sweep_holdout", "cvar_sweep_as_recovery"):
+        canon = pd.read_csv(OUT_DIR / f"{stem}.csv")
+        parts = [pd.read_csv(OUT_DIR / f"{stem}{sfx}.csv") for sfx in suffixes
+                 if (OUT_DIR / f"{stem}{sfx}.csv").exists()]
+        new = pd.concat(parts, ignore_index=True)
+        key = set(map(tuple, new[["agent", "alpha"]].drop_duplicates().to_numpy()))
+        keep = ~canon[["agent", "alpha"]].apply(tuple, axis=1).isin(key)
+        merged = pd.concat([canon[keep], new], ignore_index=True)
+        merged = merged.sort_values(["agent", "alpha", "train_seed"], kind="stable")
+        merged.to_csv(OUT_DIR / f"{stem}.csv", index=False)
+        print(f"{stem}: {len(canon)} -> {len(merged)} rows "
+              f"(replaced {len(canon) - keep.sum()} with {len(new)})")
+    build_frontier(pd.read_csv(OUT_DIR / "cvar_sweep_holdout.csv"))
+
+
+def build_frontier(holdout_df: pd.DataFrame) -> None:
     # ── Efficient frontier ──────────────────────────────────────────────
     # Per-seed points (for a scatter / error-bar view) ...
     per_seed_rows = []
-    for agent_type in agents:
+    for agent_type in AGENTS:
         for alpha in ALL_ALPHAS:
             for train_seed in SEEDS:
                 sub = holdout_df[(holdout_df["agent"] == agent_type) &
